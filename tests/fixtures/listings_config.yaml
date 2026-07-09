@@ -1,0 +1,33 @@
+dataset:
+  id: test_listings
+  path: data/listings.csv
+  table_name: listings
+
+limits:
+  max_rows_returned: 100
+  max_execution_ms: 3000
+  max_cell_chars: 500
+  max_preview_rows: 20
+
+columns:
+  price:
+    description: Listing price in USD.
+    semantic_type: currency
+    synonyms: [asking price, list price, sale price]
+  bedrooms:
+    description: Number of bedrooms.
+    synonyms: [beds, bedroom count]
+  bathrooms:
+    description: Number of bathrooms.
+    synonyms: [baths, bathroom count]
+  sqft:
+    description: Interior living area in square feet.
+    semantic_type: area
+    synonyms: [square footage, living area, square feet]
+  zip_code:
+    description: Postal ZIP code.
+    semantic_type: postal_code
+    synonyms: [zip, zipcode, postal code]
+  neighborhood:
+    description: Listing neighborhood.
+    synonyms: [area, district]

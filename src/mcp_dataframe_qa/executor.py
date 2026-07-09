@@ -1,0 +1,181 @@
+import time
+from typing import Any, Dict, List
+
+import pandas as pd
+
+from mcp_dataframe_qa.config import LimitsConfig
+from mcp_dataframe_qa.datasets import Dataset
+from mcp_dataframe_qa.schemas import AnalysisPlan, ChartSpec, StructuredResult, TableResult
+from mcp_dataframe_qa.validator import validate_plan
+
+
+def _json_safe(value: Any) -> Any:
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return value
+
+
+def _rows_safe(rows: List[Dict[str, Any]], max_cell_chars: int) -> List[Dict[str, Any]]:
+    safe_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        safe_row: Dict[str, Any] = {}
+        for key, value in row.items():
+            value = _json_safe(value)
+            if isinstance(value, str) and len(value) > max_cell_chars:
+                value = value[: max_cell_chars - 3] + "..."
+            safe_row[key] = value
+        safe_rows.append(safe_row)
+    return safe_rows
+
+
+def _apply_filters(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
+    filtered = frame
+    for condition in plan.filters:
+        series = filtered[condition.column]
+        value = condition.value
+        if condition.op == "==":
+            mask = series == value
+        elif condition.op == "!=":
+            mask = series != value
+        elif condition.op == "<":
+            mask = series < value
+        elif condition.op == "<=":
+            mask = series <= value
+        elif condition.op == ">":
+            mask = series > value
+        elif condition.op == ">=":
+            mask = series >= value
+        elif condition.op == "in":
+            mask = series.isin(value)
+        elif condition.op == "not_in":
+            mask = ~series.isin(value)
+        elif condition.op == "contains":
+            mask = series.astype(str).str.contains(str(value), case=False, na=False)
+        else:
+            raise ValueError("Unsupported filter op: %s" % condition.op)
+        filtered = filtered[mask]
+    return filtered
+
+
+def _compute_series(frame: pd.DataFrame, metric_fn: str, column: str) -> Any:
+    if metric_fn == "count":
+        return len(frame) if column == "*" else frame[column].count()
+    if metric_fn in {"avg", "mean"}:
+        return frame[column].mean()
+    if metric_fn == "median":
+        return frame[column].median()
+    if metric_fn == "sum":
+        return frame[column].sum()
+    if metric_fn == "min":
+        return frame[column].min()
+    if metric_fn == "max":
+        return frame[column].max()
+    if metric_fn == "nunique":
+        return frame[column].nunique()
+    raise ValueError("Unsupported metric function: %s" % metric_fn)
+
+
+def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
+    grouped = frame.groupby(plan.group_by, dropna=False)
+    result = grouped.size().reset_index(name="__rows__")[plan.group_by]
+
+    for metric in plan.metrics:
+        output = metric.output_name
+        if metric.fn == "count" and metric.column == "*":
+            values = grouped.size().reset_index(name=output)
+        elif metric.fn in {"avg", "mean"}:
+            values = grouped[metric.column].mean().reset_index(name=output)
+        elif metric.fn == "median":
+            values = grouped[metric.column].median().reset_index(name=output)
+        elif metric.fn == "sum":
+            values = grouped[metric.column].sum().reset_index(name=output)
+        elif metric.fn == "min":
+            values = grouped[metric.column].min().reset_index(name=output)
+        elif metric.fn == "max":
+            values = grouped[metric.column].max().reset_index(name=output)
+        elif metric.fn == "nunique":
+            values = grouped[metric.column].nunique().reset_index(name=output)
+        else:
+            raise ValueError("Unsupported metric function: %s" % metric.fn)
+        result = result.merge(values, on=plan.group_by, how="left")
+
+    return result
+
+
+def _format_answer(plan: AnalysisPlan, result: StructuredResult) -> str:
+    if result.kind == "scalar":
+        metric = plan.metrics[0]
+        return "%s is %s." % (metric.output_name.replace("_", " "), result.value)
+    if result.table:
+        return "Returned %d rows." % len(result.table.rows)
+    return result.answer
+
+
+def execute_plan(
+    plan: AnalysisPlan,
+    dataset: Dataset,
+    limits: LimitsConfig,
+    audit_id: str,
+) -> StructuredResult:
+    start = time.monotonic()
+    plan = validate_plan(plan, dataset, limits)
+    filtered = _apply_filters(dataset.frame, plan)
+
+    if plan.group_by:
+        output = _compute_grouped(filtered, plan)
+        for sort in plan.sort:
+            output = output.sort_values(sort.column, ascending=sort.direction == "asc")
+        output = output.head(plan.limit)
+        rows = _rows_safe(output.to_dict(orient="records"), limits.max_cell_chars)
+        table = TableResult(columns=list(output.columns), rows=rows)
+        chart = None
+        if plan.group_by and plan.metrics:
+            chart = ChartSpec(kind="bar", x=plan.group_by[0], y=plan.metrics[0].output_name)
+        result = StructuredResult(
+            kind="table",
+            answer="Returned %d rows." % len(rows),
+            table=table,
+            chart=chart,
+            plan=plan,
+            audit_id=audit_id,
+        )
+    else:
+        values = [
+            {metric.output_name: _json_safe(_compute_series(filtered, metric.fn, metric.column))}
+            for metric in plan.metrics
+        ]
+        if len(values) == 1:
+            value = next(iter(values[0].values()))
+            result = StructuredResult(
+                kind="scalar",
+                answer="",
+                value=value,
+                plan=plan,
+                audit_id=audit_id,
+            )
+        else:
+            row: Dict[str, Any] = {}
+            for value in values:
+                row.update(value)
+            table = TableResult(columns=list(row.keys()), rows=_rows_safe([row], limits.max_cell_chars))
+            result = StructuredResult(
+                kind="table",
+                answer="Returned 1 row.",
+                table=table,
+                plan=plan,
+                audit_id=audit_id,
+            )
+
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    if elapsed_ms > limits.max_execution_ms:
+        result.warnings.append(
+            "Execution completed in %sms, which exceeds configured max_execution_ms=%s."
+            % (elapsed_ms, limits.max_execution_ms)
+        )
+    result.answer = _format_answer(plan, result)
+    return result

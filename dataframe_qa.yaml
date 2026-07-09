@@ -1,0 +1,56 @@
+dataset:
+  id: default
+  path: data/zillow_metro_market.csv
+  table_name: zillow_metro_market
+
+limits:
+  max_rows_returned: 100
+  max_execution_ms: 3000
+  max_cell_chars: 500
+  max_preview_rows: 20
+
+columns:
+  region_id:
+    description: Zillow Research region identifier.
+    semantic_type: identifier
+    synonyms: [zillow region id, region identifier]
+  size_rank:
+    description: Zillow Research market size rank.
+    semantic_type: rank
+    synonyms: [market size rank, region rank, rank]
+  region_name:
+    description: Metro or national region name.
+    semantic_type: dimension
+    synonyms: [metro, metros, market, markets, housing market, region, msa, city]
+  region_type:
+    description: Zillow geography type, such as country or msa.
+    semantic_type: dimension
+    synonyms: [geography type, region type]
+  state_name:
+    description: State abbreviation for the metro area, or US for the national row.
+    semantic_type: dimension
+    synonyms: [state, states, state code, geography state]
+  period:
+    description: Month-end reporting date.
+    semantic_type: date
+    synonyms: [date, month, reporting month, period]
+  year:
+    description: Calendar year extracted from the reporting period.
+    semantic_type: year
+    synonyms: [calendar year]
+  month:
+    description: Calendar month number extracted from the reporting period.
+    semantic_type: month
+    synonyms: [calendar month, month number]
+  for_sale_inventory:
+    description: Count of unique listings active at any time during the month.
+    semantic_type: count
+    synonyms: [inventory, for-sale inventory, active listings, listing inventory, available homes, homes for sale]
+  new_listings:
+    description: Count of listings that came on the market during the month.
+    semantic_type: count
+    synonyms: [new inventory, new homes listed, newly listed homes, fresh listings]
+  median_list_price:
+    description: Median listed price in USD for homes in the geography and month.
+    semantic_type: currency
+    synonyms: [median price, median asking price, median list price, list price, asking price, price]

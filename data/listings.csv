@@ -1,0 +1,13 @@
+listing_id,price,bedrooms,bathrooms,sqft,zip_code,neighborhood,status
+1,950000,3,2,1850,94110,Mission,active
+2,1250000,4,3,2400,94114,Noe Valley,active
+3,780000,2,1,1200,94110,Mission,pending
+4,2100000,5,4,3100,94123,Marina,active
+5,995000,3,2,2050,94107,Potrero,active
+6,650000,1,1,800,94103,SOMA,active
+7,1450000,3,2,1900,94114,Noe Valley,sold
+8,875000,2,2,1500,94107,Potrero,active
+9,1120000,4,2,2200,94110,Mission,active
+10,720000,2,1,950,94103,SOMA,pending
+11,1680000,4,3,2600,94123,Marina,active
+12,540000,1,1,700,94102,Tenderloin,active

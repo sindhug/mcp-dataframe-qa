@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "dataframe-qa": {
+      "command": "uv",
+      "args": [
+        "run",
+        "mcp-dataframe-qa",
+        "--config",
+        "/absolute/path/to/mcp-dataframe-qa/dataframe_qa.yaml"
+      ]
+    }
+  }
+}
