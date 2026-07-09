@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -6,16 +8,19 @@ FilterOp = Literal["==", "!=", "<", "<=", ">", ">=", "in", "not_in", "contains"]
 MetricFn = Literal["count", "sum", "avg", "mean", "median", "min", "max", "nunique"]
 SortDirection = Literal["asc", "desc"]
 ResultKind = Literal["scalar", "table", "error"]
+ExpressionOp = Literal["column", "literal", "add", "subtract", "multiply", "divide", "ratio"]
 
 
 class FilterCondition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     column: str
     op: FilterOp
     value: Any
 
 
 class Metric(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     fn: MetricFn
     column: str = "*"
@@ -31,11 +36,33 @@ class Metric(BaseModel):
 
 
 class SortSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     column: str
     direction: SortDirection = "desc"
 
 
+class Expression(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    op: ExpressionOp
+    column: str | None = None
+    value: Any = None
+    left: Expression | None = None
+    right: Expression | None = None
+
+
+class DerivedColumn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    expr: Expression
+
+
 class AnalysisPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    derive: list[DerivedColumn] = Field(default_factory=list)
     filters: list[FilterCondition] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)
     metrics: list[Metric] = Field(default_factory=list)

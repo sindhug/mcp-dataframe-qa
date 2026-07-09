@@ -5,7 +5,13 @@ import pandas as pd
 
 from mcp_dataframe_qa.config import LimitsConfig
 from mcp_dataframe_qa.datasets import Dataset
-from mcp_dataframe_qa.schemas import AnalysisPlan, ChartSpec, StructuredResult, TableResult
+from mcp_dataframe_qa.schemas import (
+    AnalysisPlan,
+    ChartSpec,
+    Expression,
+    StructuredResult,
+    TableResult,
+)
 from mcp_dataframe_qa.validator import validate_plan
 
 
@@ -31,6 +37,46 @@ def _rows_safe(rows: list[dict[str, Any]], max_cell_chars: int) -> list[dict[str
             safe_row[key] = value
         safe_rows.append(safe_row)
     return safe_rows
+
+
+def _safe_divide(left: Any, right: Any) -> Any:
+    if isinstance(right, pd.Series):
+        denominator = right.mask(right == 0)
+        return left / denominator
+    if right == 0:
+        if isinstance(left, pd.Series):
+            return pd.Series(pd.NA, index=left.index)
+        return pd.NA
+    return left / right
+
+
+def _evaluate_expression(frame: pd.DataFrame, expr: Expression) -> Any:
+    if expr.op == "column":
+        return frame[expr.column]
+    if expr.op == "literal":
+        return expr.value
+
+    left = _evaluate_expression(frame, expr.left)
+    right = _evaluate_expression(frame, expr.right)
+    if expr.op == "add":
+        return left + right
+    if expr.op == "subtract":
+        return left - right
+    if expr.op == "multiply":
+        return left * right
+    if expr.op in {"divide", "ratio"}:
+        return _safe_divide(left, right)
+    raise ValueError(f"Unsupported expression op: {expr.op}")
+
+
+def _apply_derived_columns(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
+    if not plan.derive:
+        return frame
+
+    enriched = frame.copy()
+    for derived in plan.derive:
+        enriched[derived.name] = _evaluate_expression(enriched, derived.expr)
+    return enriched
 
 
 def _apply_filters(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
@@ -124,7 +170,8 @@ def execute_plan(
 ) -> StructuredResult:
     start = time.monotonic()
     plan = validate_plan(plan, dataset, limits)
-    filtered = _apply_filters(dataset.frame, plan)
+    frame = _apply_derived_columns(dataset.frame, plan)
+    filtered = _apply_filters(frame, plan)
 
     if plan.group_by:
         output = _compute_grouped(filtered, plan)

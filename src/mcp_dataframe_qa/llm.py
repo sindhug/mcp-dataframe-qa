@@ -172,6 +172,9 @@ def _prompt(question: str, profile: Mapping[str, Any]) -> dict[str, str]:
         "Use only columns present in the dataframe profile. "
         "Allowed filter ops: ==, !=, <, <=, >, >=, in, not_in, contains. "
         "Allowed metric functions: count, sum, avg, mean, median, min, max, nunique. "
+        "For custom numeric measures such as ratios, use the optional derive list. "
+        "Allowed expression ops are column, literal, add, subtract, multiply, divide, ratio. "
+        "Derived expressions must be JSON trees, never Python code. "
         "For row counts use {\"fn\":\"count\",\"column\":\"*\",\"as\":\"count\"}. "
         "For top-N questions, set group_by, one metric, descending sort on the metric alias, "
         "and limit to the requested N or 10 if no N is specified."
@@ -181,6 +184,16 @@ def _prompt(question: str, profile: Mapping[str, Any]) -> dict[str, str]:
             "question": question,
             "dataframe_profile": compact_profile(profile),
             "analysis_plan_shape": {
+                "derive": [
+                    {
+                        "name": "derived_metric",
+                        "expr": {
+                            "op": "divide",
+                            "left": {"op": "column", "column": "numeric_column"},
+                            "right": {"op": "column", "column": "other_numeric_column"},
+                        },
+                    }
+                ],
                 "filters": [{"column": "column_name", "op": ">", "value": 10}],
                 "group_by": ["column_name"],
                 "metrics": [{"fn": "median", "column": "column_name", "as": "metric_alias"}],

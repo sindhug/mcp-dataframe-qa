@@ -2,7 +2,11 @@
 
 A research-informed MCP server for safe dataframe question answering over local data.
 
-**MCP DataFrame QA** turns a local CSV, Parquet file, or Pandas dataframe into a natural-language analytics tool that works with MCP-compatible assistants. It ships with a prepared 91,872-row public Zillow Research housing-market dataset, so the repository is useful immediately after cloning while remaining small enough for GitHub and local Pandas.
+Dumping an entire dataframe into an LLM prompt for every question is an inefficient way to do analytics. It burns context window on raw rows, gets expensive quickly, forces aggressive truncation for real datasets, and can still leave the model guessing instead of calculating. The better pattern is to give the model compact schema context, let it decide what statistics are needed, execute those specific dataframe operations locally, and return the computed facts as focused context for the final answer.
+
+**MCP DataFrame QA** implements that pattern for MCP-compatible assistants. It turns a local CSV, Parquet file, or Pandas dataframe into a natural-language analytics tool where the LLM proposes a typed analysis plan and the local server validates and executes that plan with read-only Pandas operations. The dataframe stays local; the model sees profiles, plans, and results rather than the full table.
+
+The repository ships with a prepared 91,872-row public Zillow Research housing-market dataset, so it is useful immediately after cloning while remaining small enough for GitHub and local Pandas.
 
 The project builds on prior work in dataframe question answering, especially [DataFrame QA: A Universal LLM Framework on DataFrame Question Answering Without Data Exposure](https://arxiv.org/abs/2401.15463), and adapts those ideas to a practical, shareable MCP server.
 
@@ -13,7 +17,7 @@ Add an OpenAI, Anthropic, or Gemini API key, then ask questions like:
 - "How many metro-months had more than 10,000 active listings?"
 - "What are the top markets by new listings?"
 
-The design goal is simple: **English in, structured analysis out, no arbitrary code execution by default.**
+The design goal is simple: **English in, validated dataframe operations out, no arbitrary code execution by default.**
 
 ## Highlights
 
@@ -22,6 +26,7 @@ The design goal is simple: **English in, structured analysis out, no arbitrary c
 - Return structured MCP results in addition to prose
 - Expose schema through MCP resources instead of placing raw data in prompts
 - Use OpenAI, Anthropic, or Gemini to generate typed analysis plans
+- Support validated derived measures such as ratios and per-unit metrics
 - Enforce read-only execution, plan validation, output caps, and cell caps
 - Return audit IDs for every query, with optional JSONL audit logs
 - Keep the MCP tool surface small, composable, and easy for models to use
@@ -48,7 +53,7 @@ See [`data/zillow_metro_market.README.md`](data/zillow_metro_market.README.md) f
 
 ## Why This Exists
 
-The DataFrame QA paper demonstrates that language models can answer dataframe questions by generating Pandas-style analytical queries from dataframe structure, while avoiding direct exposure of the full dataset to the model. That observation is the foundation of this project.
+The DataFrame QA paper demonstrates that language models can answer dataframe questions by generating analytical queries from dataframe structure, while avoiding direct exposure of the full dataset to the model. That observation is the foundation of this project.
 
 A reusable MCP server, however, has additional engineering requirements: explicit tool schemas, client-visible resources, output validation, execution limits, auditability, and safe defaults for users who clone the repository and bring their own data. This project focuses on that implementation layer.
 
@@ -56,11 +61,12 @@ This repository adopts the following approach:
 
 1. The assistant sees a compact dataframe profile, not your full dataset.
 2. Natural language is translated into a typed analysis plan.
-3. The plan is validated against the dataframe schema and guardrails.
-4. A deterministic read-only executor runs the analysis.
-5. Results are returned as structured MCP content plus a concise human-readable answer.
+3. The plan may include derived numeric measures, represented as JSON expression trees rather than Python code.
+4. The plan is validated against the dataframe schema, type rules, and guardrails.
+5. A deterministic read-only executor runs the approved dataframe operations.
+6. Results are returned as structured MCP content plus a concise human-readable answer.
 
-The result is a reusable MCP server for dataframe analytics with explicit production-oriented mechanisms: typed schemas, read-only execution, output caps, audit IDs, optional audit logs, and clear MCP resources/tools/prompts.
+The result is a reusable MCP server for dataframe analytics with explicit production-oriented mechanisms: typed schemas, read-only execution, derived-measure validation, output caps, audit IDs, optional audit logs, and clear MCP resources/tools/prompts.
 
 ## Research Context
 
@@ -282,10 +288,11 @@ explain_dataframe
 
 The DataFrame QA paper studies LLM-generated Pandas queries as a general dataframe QA mechanism. MCP DataFrame QA preserves the central idea of translating natural language into executable analysis, but uses a typed intermediate representation by default.
 
-Instead of executing arbitrary Python, the assistant produces a typed `AnalysisPlan`.
+Instead of executing arbitrary Python, the assistant produces a typed `AnalysisPlan`. The plan is data, not code: it can describe filters, derived numeric columns, group-bys, metrics, sort order, and limits.
 
 ```json
 {
+  "derive": [],
   "filters": [],
   "group_by": ["region_name"],
   "metrics": [
@@ -305,18 +312,122 @@ Instead of executing arbitrary Python, the assistant produces a typed `AnalysisP
 }
 ```
 
+For questions that need custom statistics, the plan can include derived columns. For example, a price-per-square-foot question can be represented as a safe expression tree:
+
+```json
+{
+  "derive": [
+    {
+      "name": "price_per_sqft",
+      "expr": {
+        "op": "divide",
+        "left": { "op": "column", "column": "price" },
+        "right": { "op": "column", "column": "sqft" }
+      }
+    }
+  ],
+  "filters": [],
+  "group_by": ["neighborhood"],
+  "metrics": [
+    {
+      "fn": "median",
+      "column": "price_per_sqft",
+      "as": "median_price_per_sqft"
+    }
+  ],
+  "sort": [
+    {
+      "column": "median_price_per_sqft",
+      "direction": "desc"
+    }
+  ],
+  "limit": 10
+}
+```
+
 The server validates that plan before anything runs:
 
 - columns must exist
+- derived columns must have simple, non-conflicting names
+- derived expressions may use only approved JSON operators: `column`, `literal`, `add`, `subtract`, `multiply`, `divide`, and `ratio`
+- arithmetic expressions must use numeric operands
 - filter operators and metric functions must be allowed by the schema
+- metric functions must be compatible with the referenced column type
 - result limits are enforced
 - long string cells are capped
 - execution uses deterministic read-only Pandas operations
+- no Python source code, imports, filesystem access, or network access are accepted as part of a plan
 - every query receives an audit id
 - optional JSONL audit logs are written only when configured
 - execution time is measured and reported as a warning if it exceeds `max_execution_ms`
 
 This plan-based layer is the main engineering adaptation. It makes the generated analysis easier to validate, explain, test, cache, and audit before execution.
+
+### Adding Safe Operations
+
+The allowed operations are intentionally explicit. If an analysis operation should be supported, add it to the plan contract and executor instead of asking the LLM to emit raw Pandas code.
+
+Use this path for a new row-level expression operator:
+
+1. Add the operation name to `ExpressionOp` in `src/mcp_dataframe_qa/schemas.py`.
+2. Add validation rules in `src/mcp_dataframe_qa/validator.py`. For numeric binary operations, this usually means adding the operation to `BINARY_NUMERIC_OPS`.
+3. Add the Pandas implementation in `_evaluate_expression` in `src/mcp_dataframe_qa/executor.py`.
+4. Update the LLM prompt in `src/mcp_dataframe_qa/llm.py` so model-backed planners know the operation exists.
+5. Add guardrail and execution tests in `tests/test_guardrails.py`.
+6. Update this README if the operation changes the public plan contract.
+
+For example, to allow a safe `power` expression:
+
+```python
+# src/mcp_dataframe_qa/schemas.py
+ExpressionOp = Literal[
+    "column",
+    "literal",
+    "add",
+    "subtract",
+    "multiply",
+    "divide",
+    "ratio",
+    "power",
+]
+```
+
+```python
+# src/mcp_dataframe_qa/validator.py
+BINARY_NUMERIC_OPS = {"add", "subtract", "multiply", "divide", "ratio", "power"}
+```
+
+```python
+# src/mcp_dataframe_qa/executor.py
+if expr.op == "power":
+    return left**right
+```
+
+Then a planner could request:
+
+```json
+{
+  "derive": [
+    {
+      "name": "sqft_squared",
+      "expr": {
+        "op": "power",
+        "left": { "op": "column", "column": "sqft" },
+        "right": { "op": "literal", "value": 2 }
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "fn": "avg",
+      "column": "sqft_squared",
+      "as": "avg_sqft_squared"
+    }
+  ]
+}
+```
+
+For a new aggregate such as `std`, make the same kind of change in `MetricFn`, the metric validation rules, `_compute_series`, `_compute_grouped`, the LLM prompt, and tests. For larger features such as correlation, rolling windows, joins, or date bucketing, prefer adding a new typed plan node with its own validator and executor handler rather than squeezing complex behavior into a string field.
 
 Example structured result:
 
@@ -352,6 +463,8 @@ This follows the direction of DataFrame QA research: generate analysis from data
 
 Generated Pandas remains a valuable research and prototyping technique. For a shareable MCP server, this project uses a typed plan as the default because it provides a narrower execution contract and clearer validation boundary.
 
+The plan can express more than simple aggregates: derived numeric columns are represented as JSON expression trees and executed by known-safe Pandas handlers. This gives the LLM room to request custom statistics such as ratios without giving it a live Python interpreter.
+
 ### 3. Minimal Tool Surface
 
 MCP servers are easier for models and humans to understand when the tool list is small and composable. This project exposes a few high-leverage tools instead of a tool per dataframe operation.
@@ -369,7 +482,7 @@ The default path is read-only analysis. Advanced code execution, custom function
 MCP DataFrame QA is designed for practical, local dataframe analysis. It intentionally does not attempt to solve every form of tabular reasoning.
 
 - It is best suited to single-table or lightly configured dataframe workflows.
-- It prioritizes deterministic aggregates, filters, sorting, grouping, and summaries.
+- It prioritizes deterministic aggregates, filters, sorting, grouping, derived arithmetic measures, and summaries.
 - It does not replace a governed enterprise semantic layer.
 - It does not guarantee correct answers for ambiguous business terminology without column descriptions or synonyms.
 - It does not expose unrestricted Python execution in the default path.
@@ -413,7 +526,7 @@ LLM planner or built-in heuristic planner
 AnalysisPlan
     |
     v
-Validator: schema, limits, policy
+Validator: schema, types, limits, policy
     |
     v
 Executor: read-only Pandas DataFrame engine
@@ -434,8 +547,8 @@ src/mcp_dataframe_qa/
   datasets.py        # dataset registry and loaders
   profiling.py       # schema, stats, safe examples
   planner.py         # question -> AnalysisPlan
-  schemas.py         # Pydantic models
-  validator.py       # guardrails and policy checks
+  schemas.py         # Pydantic plans, expressions, and results
+  validator.py       # guardrails, type rules, and policy checks
   executor.py        # read-only DataFrame execution
   audit.py           # audit records
 ```
@@ -450,6 +563,7 @@ Bundled Zillow Research dataset:
 - "Show average for-sale inventory by state."
 - "What are the top markets by new listings?"
 - "How many rows have median list price over $1M?"
+- "Which markets have the highest new-listings-to-inventory ratio?"
 
 Small listing fixture used by the tests:
 
@@ -457,10 +571,11 @@ Small listing fixture used by the tests:
 - "Show average price by bedroom count."
 - "How many listings have at least 3 bedrooms and 2 bathrooms?"
 - "What are the top ZIP codes by median price?"
+- "Which neighborhoods have the highest median price per square foot?"
 
 Bring your own dataframe works best when questions map to the implemented
-operations: counts, filters, group-bys, aggregate metrics, sorting, limits, and
-capped previews.
+operations: counts, filters, group-bys, aggregate metrics, derived numeric
+measures, sorting, limits, and capped previews.
 
 ## When to Use This
 
@@ -489,6 +604,7 @@ Do not use it as a replacement for:
 - Configurable column descriptions, semantic types, and synonyms
 - Dataset profiling with capped examples
 - Pydantic `AnalysisPlan` schemas
+- Validated derived numeric expressions for ratios and arithmetic measures
 - Conservative built-in natural-language planner for offline fallback testing
 - Read-only Pandas-backed execution
 - MCP resources for profiles, columns, and capped examples
@@ -501,6 +617,7 @@ Do not use it as a replacement for:
 
 - No DuckDB execution adapter.
 - No arbitrary Pandas code sandbox.
+- No unrestricted custom Python statistics in the default path.
 - No multi-table joins or governed semantic layer.
 - No benchmark-quality table-QA evaluation suite.
 - No enterprise authorization model or multi-tenant deployment layer.
@@ -512,6 +629,7 @@ This project is intentionally small and opinionated. Good contributions usually 
 
 - new dataframe loaders
 - stronger plan validation
+- more safe expression operators and aggregate functions
 - better profiling and semantic column hints
 - more evaluation questions
 - clearer MCP client examples
