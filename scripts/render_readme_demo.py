@@ -118,8 +118,11 @@ def draw_header(draw: ImageDraw.ImageDraw) -> None:
         FONT["subtitle"],
         COLORS["muted"],
     )
-    rounded(draw, (824, 36, 1046, 72), 18, COLORS["soft_green"], COLORS["green_dark"])
-    text(draw, (844, 46), "No raw dataframe prompt dump", FONT["label"], COLORS["green_dark"])
+    badge = "No raw dataframe prompt dump"
+    badge_width = int(draw.textlength(badge, font=FONT["label"])) + 42
+    badge_box = (WIDTH - 48 - badge_width, 36, WIDTH - 48, 72)
+    rounded(draw, badge_box, 18, COLORS["soft_green"], COLORS["green_dark"])
+    text(draw, (badge_box[0] + 21, 46), badge, FONT["label"], COLORS["green_dark"])
 
 
 def draw_terminal_shell(draw: ImageDraw.ImageDraw) -> None:
@@ -249,9 +252,9 @@ def main() -> None:
 
     for chars in [0, 18, 39, 61, 82, len(COMMAND)]:
         frames.append(make_frame(0, chars))
-        durations.append(130)
+        durations.append(220)
 
-    for stage, duration in [(1, 500), (2, 650), (3, 650), (4, 1000), (5, 1800)]:
+    for stage, duration in [(1, 1100), (2, 1300), (3, 1300), (4, 2200), (5, 3200)]:
         frames.append(make_frame(stage))
         durations.append(duration)
 
