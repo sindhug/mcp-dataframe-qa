@@ -6,7 +6,7 @@ A research-informed MCP server for safe dataframe question answering over local 
 
 The project builds on prior work in dataframe question answering, especially [DataFrame QA: A Universal LLM Framework on DataFrame Question Answering Without Data Exposure](https://arxiv.org/abs/2401.15463), and adapts those ideas to a practical, shareable MCP server.
 
-Start the server and ask questions like:
+Add an OpenAI, Anthropic, or Gemini API key, then ask questions like:
 
 - "What are the top metros by median list price?"
 - "Show average median list price by state."
@@ -21,8 +21,9 @@ The design goal is simple: **English in, structured analysis out, no arbitrary c
 - Ask analytical questions in natural language
 - Return structured MCP results in addition to prose
 - Expose schema through MCP resources instead of placing raw data in prompts
-- Use typed analysis plans instead of raw Python execution
-- Enforce read-only execution, timeouts, output caps, and audit logs
+- Use OpenAI, Anthropic, or Gemini to generate typed analysis plans
+- Enforce read-only execution, plan validation, output caps, and cell caps
+- Return audit IDs for every query, with optional JSONL audit logs
 - Keep the MCP tool surface small, composable, and easy for models to use
 
 ## Dataset Included
@@ -59,7 +60,7 @@ This repository adopts the following approach:
 4. A deterministic read-only executor runs the analysis.
 5. Results are returned as structured MCP content plus a concise human-readable answer.
 
-The result is a reusable MCP server for dataframe analytics with explicit production-oriented mechanisms: typed schemas, read-only execution, output caps, timeouts, audit logs, and clear MCP resources/tools/prompts.
+The result is a reusable MCP server for dataframe analytics with explicit production-oriented mechanisms: typed schemas, read-only execution, output caps, audit IDs, optional audit logs, and clear MCP resources/tools/prompts.
 
 ## Research Context
 
@@ -80,7 +81,7 @@ Relative to research prototypes and notebook-oriented dataframe agents, this rep
 - stable input and output schemas
 - a typed intermediate analysis representation
 - deterministic read-only execution
-- local-first operation with no network access required for analysis
+- local dataframe execution; the only network call in the local chatbot is the selected LLM provider request
 - audit records and result-size controls
 
 ## Quick Start
@@ -89,10 +90,31 @@ Relative to research prototypes and notebook-oriented dataframe agents, this rep
 git clone https://github.com/sindhug/mcp-dataframe-qa.git
 cd mcp-dataframe-qa
 uv sync
-uv run mcp-dataframe-qa
+cp .env.example .env
 ```
 
-Then connect your MCP client to the server.
+Open `.env` and set one provider:
+
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-your-key
+```
+
+Then run the model-backed local chatbot:
+
+```bash
+uv run mcp-dataframe-chat --question 'What are the top metros by median list price?'
+```
+
+That command launches the MCP server locally over stdio, sends one question through
+an OpenAI, Anthropic, or Gemini planner, executes the validated plan through MCP,
+and prints the structured table result.
+
+To start the MCP server for an MCP-compatible client:
+
+```bash
+uv run mcp-dataframe-qa
+```
 
 You can also verify the local engine before connecting an MCP client:
 
@@ -101,7 +123,7 @@ uv run mcp-dataframe-qa --profile
 uv run mcp-dataframe-qa --ask 'What are the top metros by median list price?'
 ```
 
-For a local chatbot loop that verifies the MCP server over stdio:
+For an interactive chatbot loop:
 
 ```bash
 uv run mcp-dataframe-chat
@@ -112,6 +134,45 @@ Or ask one question and exit:
 ```bash
 uv run mcp-dataframe-chat --question 'How many metro-months had more than 10,000 active listings?'
 ```
+
+For offline development without an LLM key, the deterministic planner remains available:
+
+```bash
+uv run mcp-dataframe-chat --planner heuristic --question 'What are the top metros by median list price?'
+```
+
+That fallback is useful for testing the executor and MCP plumbing, but the main chatbot path is model-backed.
+
+### API Key Configuration
+
+The local chatbot reads `.env` automatically. Set exactly one provider key:
+
+```bash
+# .env
+LLM_PROVIDER=openai      # openai, anthropic, or gemini
+
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
+
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-4-5
+
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+You can also pass values at runtime:
+
+```bash
+uv run mcp-dataframe-chat \
+  --provider anthropic \
+  --model claude-sonnet-4-5 \
+  --api-key "$ANTHROPIC_API_KEY"
+```
+
+The dataframe stays local. The model receives the compact dataframe profile,
+column metadata, and user question so it can produce an `AnalysisPlan`; it does
+not receive the full CSV.
 
 Example local MCP configuration:
 
@@ -173,6 +234,19 @@ columns:
 
 ## What You Get
 
+### Local Chatbot
+
+`mcp-dataframe-chat` is a terminal chatbot that starts the MCP server over stdio,
+reads the dataframe profile from `dataframe://default/profile`, asks the selected
+LLM provider to produce an `AnalysisPlan`, and executes that plan through the
+`execute_analysis_plan` MCP tool.
+
+Supported providers:
+
+- OpenAI through the Responses API
+- Anthropic through the Messages API
+- Gemini through the GenerateContent API
+
 ### MCP Resources
 
 Resources expose dataset context without dumping raw data into the model.
@@ -212,40 +286,35 @@ Instead of executing arbitrary Python, the assistant produces a typed `AnalysisP
 
 ```json
 {
-  "filters": [
-    {
-      "column": "price",
-      "op": "<",
-      "value": 1000000
-    }
-  ],
-  "group_by": ["bedrooms"],
+  "filters": [],
+  "group_by": ["region_name"],
   "metrics": [
     {
-      "fn": "avg",
-      "column": "price",
-      "as": "avg_price"
+      "fn": "median",
+      "column": "median_list_price",
+      "as": "median_list_price"
     }
   ],
   "sort": [
     {
-      "column": "bedrooms",
-      "direction": "asc"
+      "column": "median_list_price",
+      "direction": "desc"
     }
   ],
-  "limit": 100
+  "limit": 10
 }
 ```
 
 The server validates that plan before anything runs:
 
 - columns must exist
-- operations must be allowed
+- filter operators and metric functions must be allowed by the schema
 - result limits are enforced
-- execution is read-only
-- generated SQL is constrained to safe statements
-- large outputs are summarized or rejected
-- every tool call receives an audit id
+- long string cells are capped
+- execution uses deterministic read-only Pandas operations
+- every query receives an audit id
+- optional JSONL audit logs are written only when configured
+- execution time is measured and reported as a warning if it exceeds `max_execution_ms`
 
 This plan-based layer is the main engineering adaptation. It makes the generated analysis easier to validate, explain, test, cache, and audit before execution.
 
@@ -253,10 +322,18 @@ Example structured result:
 
 ```json
 {
-  "answer": "There are 348 listings under $1M.",
-  "kind": "scalar",
-  "value": 348,
-  "table": null,
+  "answer": "Returned 10 rows. Query: What are the top metros by median list price?",
+  "kind": "table",
+  "value": null,
+  "table": {
+    "columns": ["region_name", "median_list_price"],
+    "rows": [
+      {
+        "region_name": "Vineyard Haven, MA",
+        "median_list_price": 1997667.0
+      }
+    ]
+  },
   "chart": null,
   "warnings": [],
   "audit_id": "qry_20260709_0001"
@@ -285,7 +362,7 @@ Every answer returns machine-readable content. The prose is there for humans, bu
 
 ### 5. Safe by Default, Extensible by Choice
 
-The default path is read-only analysis. Advanced code execution, custom functions, remote data loading, or broader filesystem access should be explicit opt-ins.
+The default path is read-only analysis. Advanced code execution, custom functions, remote data loading, and broader filesystem access are extension points rather than default features.
 
 ## Scope and Limitations
 
@@ -297,6 +374,7 @@ MCP DataFrame QA is designed for practical, local dataframe analysis. It intenti
 - It does not guarantee correct answers for ambiguous business terminology without column descriptions or synonyms.
 - It does not expose unrestricted Python execution in the default path.
 - It treats charting as a structured output problem, not as a primary visualization framework.
+- It does not include a DuckDB execution adapter, arbitrary Python sandbox, or multi-table semantic layer.
 
 These constraints are deliberate. They keep the repository small enough to clone and understand, while leaving room for opt-in extensions.
 
@@ -305,18 +383,17 @@ These constraints are deliberate. They keep the repository small enough to clone
 Guardrails are treated as part of the core interface rather than as optional deployment details.
 
 - Read-only dataframe access
-- No filesystem writes during analysis
-- No network access from analysis execution
-- No arbitrary imports in the default path
-- Execution timeouts
+- No filesystem writes from the analysis executor
+- No network access from the analysis executor
+- No arbitrary imports or user code execution in the default path
+- Execution-duration warnings through `max_execution_ms`
 - Row, cell, and payload-size caps
 - Query validation before execution
 - Output sanitization
-- Audit logs for every tool call
-- Stable JSON schemas for tool input and output
-- Optional column allowlists and deny lists
+- Audit IDs for every query and optional JSONL audit logs
+- Pydantic schemas for plans and structured results
 
-The default server should be safe enough to run locally on private datasets and simple enough for analysts to understand.
+The default server runs local, read-only dataframe analysis with explicit validation and capped outputs.
 
 ## Architecture
 
@@ -324,36 +401,42 @@ The default server should be safe enough to run locally on private datasets and 
 User question
     |
     v
-MCP tool: query_dataframe
+Local chatbot or MCP-compatible client
     |
     v
-Dataset registry + dataframe profile
+Dataframe profile resource
     |
     v
-Planner: question -> AnalysisPlan
+LLM planner or built-in heuristic planner
+    |
+    v
+AnalysisPlan
     |
     v
 Validator: schema, limits, policy
     |
     v
-Executor: read-only SQL/DataFrame engine
+Executor: read-only Pandas DataFrame engine
     |
     v
 StructuredResult: answer, value/table/chart, audit id
 ```
 
-Recommended implementation layout:
+Implemented package layout:
 
 ```text
 src/mcp_dataframe_qa/
+  cli.py             # command-line entrypoint and MCP server launcher
+  chatbot.py         # model-backed local stdio chatbot
+  llm.py             # OpenAI, Anthropic, and Gemini planning clients
   server.py          # MCP resources, tools, prompts
+  config.py          # YAML configuration models and loader
   datasets.py        # dataset registry and loaders
   profiling.py       # schema, stats, safe examples
   planner.py         # question -> AnalysisPlan
   schemas.py         # Pydantic models
   validator.py       # guardrails and policy checks
   executor.py        # read-only DataFrame execution
-  results.py         # structured result formatting
   audit.py           # audit records
 ```
 
@@ -368,26 +451,16 @@ Bundled Zillow Research dataset:
 - "What are the top markets by new listings?"
 - "How many rows have median list price over $1M?"
 
-Bring your own listing dataframe:
+Small listing fixture used by the tests:
 
 - "How many homes are under $750k?"
 - "Show average price by bedroom count."
 - "How many listings have at least 3 bedrooms and 2 bathrooms?"
 - "What are the top ZIP codes by median price?"
 
-Sales:
-
-- "What was revenue by month?"
-- "Which region had the highest average order value?"
-- "Show the top 20 customers by total spend."
-- "How many orders were refunded last quarter?"
-
-Product analytics:
-
-- "What is the conversion rate by plan?"
-- "Which acquisition channel has the highest retention?"
-- "Show weekly active users by cohort."
-- "How many accounts have not logged in for 30 days?"
+Bring your own dataframe works best when questions map to the implemented
+operations: counts, filters, group-bys, aggregate metrics, sorting, limits, and
+capped previews.
 
 ## When to Use This
 
@@ -405,32 +478,33 @@ Do not use it as a replacement for:
 - multi-tenant production analytics without additional authorization
 - unrestricted Python notebooks
 
-## Current Status
+## Implemented
 
 - CSV and JSON loading
 - Parquet loading through Pandas when a Parquet engine is installed
 - Bundled public Zillow Research housing-market dataframe
 - Reproducible Zillow dataset preparation script
+- `.env`-based API key configuration through `.env.example`
+- Model-backed local chatbot for OpenAI, Anthropic, and Gemini
 - Configurable column descriptions, semantic types, and synonyms
 - Dataset profiling with capped examples
 - Pydantic `AnalysisPlan` schemas
-- Conservative built-in natural-language planner for common questions
+- Conservative built-in natural-language planner for offline fallback testing
 - Read-only Pandas-backed execution
-- MCP resources for dataset profiles
+- MCP resources for profiles, columns, and capped examples
 - MCP tools with structured result payloads
+- Local terminal chatbot that verifies the MCP stdio path
 - Audit IDs and optional JSONL audit log sink
-- Test coverage for common real-estate questions and guardrails
+- Test coverage for common real-estate questions, guardrails, and the mocked LLM planner
 
-## Roadmap
+## Not Yet Built
 
-- DuckDB-backed execution adapter
-- Direct Pandas dataframe registration examples
-- MCP tool annotations for clients that surface read-only hints
-- CLI dataset profiler
-- Optional chart specs
-- Optional local-only Pandas code sandbox for advanced users
-- Evaluation set for common dataframe questions
-- Larger table-QA regression suite
+- No DuckDB execution adapter.
+- No arbitrary Pandas code sandbox.
+- No multi-table joins or governed semantic layer.
+- No benchmark-quality table-QA evaluation suite.
+- No enterprise authorization model or multi-tenant deployment layer.
+- No hard process-level timeout around Pandas execution; execution duration is measured and reported as a warning.
 
 ## Contributing
 
@@ -454,6 +528,9 @@ This project is shaped by current MCP and table-QA patterns:
 - [MCP tools: structured content and output schemas](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 - [MCP resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources)
 - [MCP security best practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)
+- [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
+- [Anthropic Messages API](https://docs.anthropic.com/en/api/messages-examples)
+- [Gemini GenerateContent API](https://ai.google.dev/api/generate-content)
 - [Zillow Research Housing Data](https://www.zillow.com/research/data/)
 - [DataFrame QA: A Universal LLM Framework on DataFrame Question Answering Without Data Exposure](https://arxiv.org/abs/2401.15463)
 - [MCP Server Architecture Patterns for LLM-Integrated Applications](https://arxiv.org/abs/2606.30317)
@@ -466,7 +543,7 @@ The intended user experience is deliberately simple:
 1. Drop in a file.
 2. Start the MCP server.
 3. Ask a question.
-4. Get a correct, capped, auditable answer.
+4. Get a structured, capped, auditable result.
 
 The project avoids large prompt payloads, opaque Python execution, and unnecessary dataset exposure. It aims to provide a small, inspectable adapter between a dataframe and the assistant a user already uses.
 
