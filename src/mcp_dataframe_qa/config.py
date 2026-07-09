@@ -1,13 +1,12 @@
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
 class ColumnConfig(BaseModel):
     description: str = ""
-    semantic_type: Optional[str] = None
-    synonyms: List[str] = Field(default_factory=list)
+    semantic_type: str | None = None
+    synonyms: list[str] = Field(default_factory=list)
 
 
 class DatasetConfig(BaseModel):
@@ -26,11 +25,11 @@ class LimitsConfig(BaseModel):
 class AppConfig(BaseModel):
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
-    columns: Dict[str, ColumnConfig] = Field(default_factory=dict)
-    audit_log_path: Optional[str] = None
+    columns: dict[str, ColumnConfig] = Field(default_factory=dict)
+    audit_log_path: str | None = None
 
 
-def load_config(path: Optional[str] = None) -> AppConfig:
+def load_config(path: str | None = None) -> AppConfig:
     if path is None:
         default_path = Path("dataframe_qa.yaml")
         if not default_path.exists():
@@ -39,7 +38,7 @@ def load_config(path: Optional[str] = None) -> AppConfig:
 
     config_path = Path(path)
     if not config_path.exists():
-        raise FileNotFoundError("Config file not found: %s" % config_path)
+        raise FileNotFoundError(f"Config file not found: {config_path}")
 
     try:
         import yaml

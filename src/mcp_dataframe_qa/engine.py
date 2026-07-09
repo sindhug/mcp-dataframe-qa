@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -18,7 +18,7 @@ class DataFrameQA:
         self.config = config
 
     @classmethod
-    def from_config(cls, config: AppConfig, data_path: Optional[str] = None) -> "DataFrameQA":
+    def from_config(cls, config: AppConfig, data_path: str | None = None) -> "DataFrameQA":
         registry = DatasetRegistry()
         dataset = dataset_from_path(
             path=data_path or config.dataset.path,
@@ -35,8 +35,8 @@ class DataFrameQA:
         frame: pd.DataFrame,
         dataset_id: str = "default",
         table_name: str = "dataframe",
-        columns: Optional[Dict[str, ColumnConfig]] = None,
-        limits: Optional[LimitsConfig] = None,
+        columns: dict[str, ColumnConfig] | None = None,
+        limits: LimitsConfig | None = None,
     ) -> "DataFrameQA":
         registry = DatasetRegistry()
         dataset = Dataset(
@@ -53,18 +53,21 @@ class DataFrameQA:
         )
         return cls(registry=registry, config=config)
 
-    def profile(self, dataset_id: str = "default") -> Dict[str, Any]:
+    def profile(self, dataset_id: str = "default") -> dict[str, Any]:
         dataset = self._dataset(dataset_id)
         return dataset.profile(max_cell_chars=self.config.limits.max_cell_chars)
 
-    def preview(self, dataset_id: str = "default", limit: Optional[int] = None) -> StructuredResult:
+    def preview(self, dataset_id: str = "default", limit: int | None = None) -> StructuredResult:
         dataset = self._dataset(dataset_id)
-        row_limit = min(limit or self.config.limits.max_preview_rows, self.config.limits.max_preview_rows)
+        row_limit = min(
+            limit or self.config.limits.max_preview_rows,
+            self.config.limits.max_preview_rows,
+        )
         rows = dataset.frame.head(row_limit).to_dict(orient="records")
         table = TableResult(columns=list(dataset.frame.columns), rows=rows)
         return StructuredResult(
             kind="table",
-            answer="Returned %d preview rows." % len(rows),
+            answer=f"Returned {len(rows)} preview rows.",
             table=table,
             audit_id=new_audit_id("preview"),
         )
@@ -76,7 +79,7 @@ class DataFrameQA:
         try:
             plan = HeuristicPlanner(dataset).plan(question)
             result = self.execute_plan(plan, dataset_id=dataset_id, audit_id=audit_id)
-            result.answer = "%s Query: %s" % (result.answer, question)
+            result.answer = f"{result.answer} Query: {question}"
             return result
         except Exception as exc:
             return StructuredResult(
@@ -100,12 +103,17 @@ class DataFrameQA:
         self,
         plan: AnalysisPlan,
         dataset_id: str = "default",
-        audit_id: Optional[str] = None,
+        audit_id: str | None = None,
     ) -> StructuredResult:
         dataset = self._dataset(dataset_id)
         audit_id = audit_id or new_audit_id()
         try:
-            result = execute_plan(plan, dataset=dataset, limits=self.config.limits, audit_id=audit_id)
+            result = execute_plan(
+                plan,
+                dataset=dataset,
+                limits=self.config.limits,
+                audit_id=audit_id,
+            )
         except PlanValidationError as exc:
             result = StructuredResult(kind="error", answer=str(exc), plan=plan, audit_id=audit_id)
         write_audit_record(

@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 import pandas as pd
 
@@ -50,8 +50,8 @@ class HeuristicPlanner:
         filters = self._extract_filters(normalized)
         metrics = self._extract_metrics(normalized)
         group_by = self._extract_group_by(normalized)
-        sort: List[SortSpec] = []
-        limit: Optional[int] = None
+        sort: list[SortSpec] = []
+        limit: int | None = None
 
         if "top" in normalized and group_by and metrics:
             sort = [SortSpec(column=metrics[0].output_name, direction="desc")]
@@ -60,10 +60,16 @@ class HeuristicPlanner:
         if not metrics:
             metrics = [Metric(fn="count", column="*", name="count")]
 
-        return AnalysisPlan(filters=filters, group_by=group_by, metrics=metrics, sort=sort, limit=limit)
+        return AnalysisPlan(
+            filters=filters,
+            group_by=group_by,
+            metrics=metrics,
+            sort=sort,
+            limit=limit,
+        )
 
-    def _build_column_terms(self, dataset: Dataset) -> Dict[str, List[str]]:
-        terms: Dict[str, List[str]] = {}
+    def _build_column_terms(self, dataset: Dataset) -> dict[str, list[str]]:
+        terms: dict[str, list[str]] = {}
         columns = dataset.columns or {}
         for column in dataset.frame.columns:
             configured = columns.get(column, ColumnConfig())
@@ -76,25 +82,26 @@ class HeuristicPlanner:
             terms[column] = sorted({_normalize(candidate) for candidate in candidates if candidate})
         return terms
 
-    def _find_column(self, text: str, candidates: Optional[Iterable[str]] = None) -> Optional[str]:
+    def _find_column(self, text: str, candidates: Iterable[str] | None = None) -> str | None:
         candidate_columns = list(candidates) if candidates else list(self.dataset.frame.columns)
-        best: Optional[Tuple[int, str]] = None
-        padded = " %s " % text
+        best: tuple[int, str] | None = None
+        padded = f" {text} "
         for column in candidate_columns:
             for term in self.column_terms.get(column, []):
                 if not term:
                     continue
-                if " %s " % term in padded or term in text:
+                if f" {term} " in padded or term in text:
                     score = len(term)
                     if best is None or score > best[0]:
                         best = (score, column)
         return best[1] if best else None
 
-    def _numeric_columns(self) -> List[str]:
+    def _numeric_columns(self) -> list[str]:
         return [
             column
             for column in self.dataset.frame.columns
-            if pd.api.types.is_numeric_dtype(self.dataset.frame[column]) and self._is_measure_column(column)
+            if pd.api.types.is_numeric_dtype(self.dataset.frame[column])
+            and self._is_measure_column(column)
         ]
 
     def _is_measure_column(self, column: str) -> bool:
@@ -129,7 +136,8 @@ class HeuristicPlanner:
         metric_context = text
         if " by " in text:
             before_by, after_by = text.split(" by ", 1)
-            if "top" in before_by and any(token in after_by for token in ["median", "average", "avg", "mean", "sum", "total"]):
+            aggregate_words = ["median", "average", "avg", "mean", "sum", "total"]
+            if "top" in before_by and any(token in after_by for token in aggregate_words):
                 metric_context = after_by
             else:
                 metric_context = before_by
@@ -145,8 +153,8 @@ class HeuristicPlanner:
             return numeric[0]
         raise ValueError("No numeric column available for metric.")
 
-    def _extract_metrics(self, text: str) -> List[Metric]:
-        metric_fn: Optional[str] = None
+    def _extract_metrics(self, text: str) -> list[Metric]:
+        metric_fn: str | None = None
         if any(token in text for token in ["average", "avg", "mean"]):
             metric_fn = "avg"
         elif "median" in text:
@@ -171,10 +179,10 @@ class HeuristicPlanner:
         column = self._default_measure_column(text)
         if metric_fn == "max" and "top" in text and "median" in text:
             metric_fn = "median"
-        output = column if column.startswith("%s_" % metric_fn) else "%s_%s" % (metric_fn, column)
+        output = column if column.startswith(f"{metric_fn}_") else f"{metric_fn}_{column}"
         return [Metric(fn=metric_fn, column=column, name=output)]
 
-    def _extract_group_by(self, text: str) -> List[str]:
+    def _extract_group_by(self, text: str) -> list[str]:
         if " by " not in text and " each " not in text:
             return []
 
@@ -188,8 +196,8 @@ class HeuristicPlanner:
         column = self._find_column(after_by)
         return [column] if column else []
 
-    def _extract_filters(self, text: str) -> List[FilterCondition]:
-        filters: List[FilterCondition] = []
+    def _extract_filters(self, text: str) -> list[FilterCondition]:
+        filters: list[FilterCondition] = []
 
         for column in self.dataset.frame.columns:
             if not pd.api.types.is_numeric_dtype(self.dataset.frame[column]):
@@ -202,9 +210,9 @@ class HeuristicPlanner:
             if not term_pattern:
                 continue
 
-            plus_before = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*\+\s*(?:%s)" % term_pattern, text)
+            plus_before = re.search(rf"(\d[\d,]*(?:\.\d+)?)\s*\+\s*(?:{term_pattern})", text)
             at_least = re.search(
-                r"(?:at least|minimum|min)\s+(\d[\d,]*(?:\.\d+)?)\s*(?:%s)" % term_pattern,
+                rf"(?:at least|minimum|min)\s+(\d[\d,]*(?:\.\d+)?)\s*(?:{term_pattern})",
                 text,
             )
             if plus_before or at_least:
@@ -219,44 +227,61 @@ class HeuristicPlanner:
                 "at least|at most|no more than|minimum|maximum|min|max"
             )
             comparison = re.search(
-                r"(?:%s).{0,18}?(%s)\s+\$?(\d[\d,]*(?:\.\d+)?[mk]?)"
-                % (term_pattern, comparison_words),
+                rf"(?:{term_pattern}).{{0,18}}?({comparison_words})\s+\$?(\d[\d,]*(?:\.\d+)?[mk]?)",
                 text,
             )
             reverse_comparison = re.search(
-                r"(%s)\s+\$?(\d[\d,]*(?:\.\d+)?[mk]?)\s+(?:%s)"
-                % (comparison_words, term_pattern),
+                rf"({comparison_words})\s+\$?(\d[\d,]*(?:\.\d+)?[mk]?)\s+(?:{term_pattern})",
                 text,
             )
             if comparison or reverse_comparison:
                 match = comparison or reverse_comparison
                 word, raw = match.group(1), match.group(2)
                 filters.append(
-                    FilterCondition(column=column, op=_comparison_op(word), value=_parse_number(raw))
+                    FilterCondition(
+                        column=column,
+                        op=_comparison_op(word),
+                        value=_parse_number(raw),
+                    )
                 )
 
-        if not any(filter_.column == "price" for filter_ in filters) and "price" in self.dataset.frame.columns:
+        has_price_filter = any(filter_.column == "price" for filter_ in filters)
+        if not has_price_filter and "price" in self.dataset.frame.columns:
             money_match = re.search(
-                r"(under|below|less than|fewer than|over|above|greater than|more than|at least|at most|no more than)\s+\$?(\d[\d,]*(?:\.\d+)?[mk]?)",
+                r"(under|below|less than|fewer than|over|above|greater than|more than|"
+                r"at least|at most|no more than)\s+\$?(\d[\d,]*(?:\.\d+)?[mk]?)",
                 text,
             )
             if money_match:
                 word, raw = money_match.group(1), money_match.group(2)
-                filters.append(FilterCondition(column="price", op=_comparison_op(word), value=_parse_number(raw)))
+                filters.append(
+                    FilterCondition(
+                        column="price",
+                        op=_comparison_op(word),
+                        value=_parse_number(raw),
+                    )
+                )
 
         for column in self.dataset.frame.columns:
             if pd.api.types.is_numeric_dtype(self.dataset.frame[column]):
                 continue
             for term in self.column_terms.get(column, []):
-                value_match = re.search(r"%s\s+(?:is|=|equals)\s+([a-z0-9 _-]+)" % re.escape(term), text)
+                value_match = re.search(
+                    rf"{re.escape(term)}\s+(?:is|=|equals)\s+([a-z0-9 _-]+)",
+                    text,
+                )
                 if value_match:
                     filters.append(
-                        FilterCondition(column=column, op="contains", value=value_match.group(1).strip())
+                        FilterCondition(
+                            column=column,
+                            op="contains",
+                            value=value_match.group(1).strip(),
+                        )
                     )
 
         return filters
 
-    def _extract_limit(self, text: str) -> Optional[int]:
+    def _extract_limit(self, text: str) -> int | None:
         match = re.search(r"top\s+(\d+)", text)
         if match:
             return int(match.group(1))

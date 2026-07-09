@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import pandas as pd
 
@@ -30,13 +31,13 @@ def profile_dataframe(
     columns: Mapping[str, ColumnConfig],
     max_examples: int = 5,
     max_cell_chars: int = 120,
-) -> Dict[str, Any]:
-    column_profiles: Dict[str, Any] = {}
+) -> dict[str, Any]:
+    column_profiles: dict[str, Any] = {}
     for name in frame.columns:
         series = frame[name]
         configured = columns.get(name, ColumnConfig())
         dtype = str(series.dtype)
-        profile: Dict[str, Any] = {
+        profile: dict[str, Any] = {
             "name": name,
             "dtype": dtype,
             "description": configured.description,
@@ -63,7 +64,7 @@ def profile_dataframe(
 
         column_profiles[name] = profile
 
-    examples: List[Dict[str, Any]] = []
+    examples: list[dict[str, Any]] = []
     for row in frame.head(max_examples).to_dict(orient="records"):
         examples.append({key: _truncate(value, max_cell_chars) for key, value in row.items()})
 

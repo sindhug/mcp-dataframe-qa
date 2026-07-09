@@ -1,4 +1,4 @@
-from typing import Iterable, Set
+from collections.abc import Iterable
 
 from mcp_dataframe_qa.config import LimitsConfig
 from mcp_dataframe_qa.datasets import Dataset
@@ -9,7 +9,7 @@ class PlanValidationError(ValueError):
     """Raised when an analysis plan violates schema or policy constraints."""
 
 
-def _known_result_columns(plan: AnalysisPlan) -> Set[str]:
+def _known_result_columns(plan: AnalysisPlan) -> set[str]:
     names = set(plan.group_by)
     names.update(metric.output_name for metric in plan.metrics)
     return names
@@ -20,8 +20,11 @@ def _validate_columns(columns: Iterable[str], dataset: Dataset, context: str) ->
     for column in columns:
         if column not in known:
             raise PlanValidationError(
-                "Unknown %s column '%s'. Available columns: %s"
-                % (context, column, ", ".join(sorted(known)))
+                "Unknown {} column '{}'. Available columns: {}".format(
+                    context,
+                    column,
+                    ", ".join(sorted(known)),
+                )
             )
 
 
@@ -43,8 +46,10 @@ def validate_plan(plan: AnalysisPlan, dataset: Dataset, limits: LimitsConfig) ->
     for sort in plan.sort:
         if sort.column not in result_columns:
             raise PlanValidationError(
-                "Sort column '%s' is not produced by the plan. Result columns: %s"
-                % (sort.column, ", ".join(sorted(result_columns)))
+                "Sort column '{}' is not produced by the plan. Result columns: {}".format(
+                    sort.column,
+                    ", ".join(sorted(result_columns)),
+                )
             )
 
     if plan.limit is None:

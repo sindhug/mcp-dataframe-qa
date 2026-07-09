@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
@@ -20,10 +20,10 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _rows_safe(rows: List[Dict[str, Any]], max_cell_chars: int) -> List[Dict[str, Any]]:
-    safe_rows: List[Dict[str, Any]] = []
+def _rows_safe(rows: list[dict[str, Any]], max_cell_chars: int) -> list[dict[str, Any]]:
+    safe_rows: list[dict[str, Any]] = []
     for row in rows:
-        safe_row: Dict[str, Any] = {}
+        safe_row: dict[str, Any] = {}
         for key, value in row.items():
             value = _json_safe(value)
             if isinstance(value, str) and len(value) > max_cell_chars:
@@ -57,7 +57,7 @@ def _apply_filters(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
         elif condition.op == "contains":
             mask = series.astype(str).str.contains(str(value), case=False, na=False)
         else:
-            raise ValueError("Unsupported filter op: %s" % condition.op)
+            raise ValueError(f"Unsupported filter op: {condition.op}")
         filtered = filtered[mask]
     return filtered
 
@@ -77,7 +77,7 @@ def _compute_series(frame: pd.DataFrame, metric_fn: str, column: str) -> Any:
         return frame[column].max()
     if metric_fn == "nunique":
         return frame[column].nunique()
-    raise ValueError("Unsupported metric function: %s" % metric_fn)
+    raise ValueError(f"Unsupported metric function: {metric_fn}")
 
 
 def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
@@ -101,7 +101,7 @@ def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
         elif metric.fn == "nunique":
             values = grouped[metric.column].nunique().reset_index(name=output)
         else:
-            raise ValueError("Unsupported metric function: %s" % metric.fn)
+            raise ValueError(f"Unsupported metric function: {metric.fn}")
         result = result.merge(values, on=plan.group_by, how="left")
 
     return result
@@ -110,9 +110,9 @@ def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
 def _format_answer(plan: AnalysisPlan, result: StructuredResult) -> str:
     if result.kind == "scalar":
         metric = plan.metrics[0]
-        return "%s is %s." % (metric.output_name.replace("_", " "), result.value)
+        return "{} is {}.".format(metric.output_name.replace("_", " "), result.value)
     if result.table:
-        return "Returned %d rows." % len(result.table.rows)
+        return f"Returned {len(result.table.rows)} rows."
     return result.answer
 
 
@@ -138,7 +138,7 @@ def execute_plan(
             chart = ChartSpec(kind="bar", x=plan.group_by[0], y=plan.metrics[0].output_name)
         result = StructuredResult(
             kind="table",
-            answer="Returned %d rows." % len(rows),
+            answer=f"Returned {len(rows)} rows.",
             table=table,
             chart=chart,
             plan=plan,
@@ -159,10 +159,13 @@ def execute_plan(
                 audit_id=audit_id,
             )
         else:
-            row: Dict[str, Any] = {}
+            row: dict[str, Any] = {}
             for value in values:
                 row.update(value)
-            table = TableResult(columns=list(row.keys()), rows=_rows_safe([row], limits.max_cell_chars))
+            table = TableResult(
+                columns=list(row.keys()),
+                rows=_rows_safe([row], limits.max_cell_chars),
+            )
             result = StructuredResult(
                 kind="table",
                 answer="Returned 1 row.",
@@ -174,8 +177,8 @@ def execute_plan(
     elapsed_ms = int((time.monotonic() - start) * 1000)
     if elapsed_ms > limits.max_execution_ms:
         result.warnings.append(
-            "Execution completed in %sms, which exceeds configured max_execution_ms=%s."
-            % (elapsed_ms, limits.max_execution_ms)
+            f"Execution completed in {elapsed_ms}ms, "
+            f"which exceeds configured max_execution_ms={limits.max_execution_ms}."
         )
     result.answer = _format_answer(plan, result)
     return result

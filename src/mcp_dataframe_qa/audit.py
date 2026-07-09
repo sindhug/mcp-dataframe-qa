@@ -2,16 +2,16 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 def new_audit_id(prefix: str = "qry") -> str:
     stamp = time.strftime("%Y%m%d_%H%M%S")
     suffix = uuid.uuid4().hex[:8]
-    return "%s_%s_%s" % (prefix, stamp, suffix)
+    return f"{prefix}_{stamp}_{suffix}"
 
 
-def write_audit_record(path: Optional[str], record: Dict[str, Any]) -> None:
+def write_audit_record(path: str | None, record: dict[str, Any]) -> None:
     if not path:
         return
     audit_path = Path(path).expanduser()
