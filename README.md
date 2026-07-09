@@ -19,6 +19,10 @@ Add an OpenAI, Anthropic, or Gemini API key, then ask questions like:
 
 The design goal is simple: **English in, validated dataframe operations out, no arbitrary code execution by default.**
 
+## Demo
+
+![Animated demo showing the MCP DataFrame QA command, validated AnalysisPlan, local Pandas execution, and structured result](docs/assets/mcp-dataframe-qa-demo.gif)
+
 ## Highlights
 
 - Bring your own CSV, Parquet file, or Pandas dataframe
