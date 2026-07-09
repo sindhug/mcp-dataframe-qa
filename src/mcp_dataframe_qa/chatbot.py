@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Run a local terminal chatbot that talks to the MCP DataFrame QA server over stdio."
         ),
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--config",

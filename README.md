@@ -201,14 +201,72 @@ Example local MCP configuration:
 }
 ```
 
-Bring your own dataframe:
+## Using Your Own Dataset
+
+There are two ways to point this at your own data. A quick one-off query with no
+setup, or a configured dataset with column descriptions that make the planner's
+answers noticeably better. Both start the same way, by looking at what you actually
+have.
+
+**1. Profile the file first.**
 
 ```bash
-uv run mcp-dataframe-qa --data ~/Downloads/my_data.csv
-uv run mcp-dataframe-qa --data ~/Downloads/my_data.parquet
+uv run mcp-dataframe-qa --data ~/Downloads/my_data.csv --profile
 ```
 
-Optional project config:
+This loads the file and prints every column's dtype, null count, summary stats, and
+top values. No LLM call, no config required. Use it to see what you're working with
+before writing anything down.
+
+**2. Generate a starter config.**
+
+```bash
+uv run mcp-dataframe-qa --data ~/Downloads/my_data.csv --init-config
+```
+
+This writes `dataframe_qa_my_data.yaml` with every column already listed under its
+real name, a guessed `semantic_type` where the column name makes it obvious (a column
+ending in `_id` becomes `identifier`, a column named `price` becomes `currency`), and
+blank `description` and `synonyms` fields for you to fill in. A wrong guess is worse
+than no guess, so ambiguous numeric columns are left blank instead of labeled with a
+false-confidence type. Pass `--out <path>` to control the filename.
+
+Open the generated file and fill in the descriptions. That's the only manual step:
+
+```yaml
+columns:
+  status:
+    description: Whether the listing is active, pending, or sold
+    semantic_type: dimension
+    synonyms: [listing status, availability]
+```
+
+**3. Use it.**
+
+```bash
+uv run mcp-dataframe-chat --config dataframe_qa_my_data.yaml
+uv run mcp-dataframe-qa --config dataframe_qa_my_data.yaml --ask "your question"
+```
+
+If a config's columns and the actual dataframe's columns ever drift apart, a renamed
+column, a config copied from a different dataset, both tools print a warning naming
+exactly which columns are affected, instead of silently answering with half the
+schema missing.
+
+**Skipping the config entirely.** `mcp-dataframe-qa --data <path>` works with no
+config at all, and is the fastest way to try a file:
+
+```bash
+uv run mcp-dataframe-qa --data ~/Downloads/my_data.csv --ask "your question"
+```
+
+The tradeoff: with no `columns:` section, the planner only has column names and raw
+sample values to work with, not descriptions or synonyms, so it will sometimes miss
+what you mean. `mcp-dataframe-chat` does not accept `--data` directly since it always
+talks to a specific configured dataset. Point it at a config with `--config` instead,
+even a minimal one with just a `dataset:` block and no `columns:` section.
+
+**Example of a fully annotated config**, the one this repo ships with:
 
 ```yaml
 # dataframe_qa.yaml
