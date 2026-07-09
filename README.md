@@ -4,7 +4,7 @@ A research-informed MCP server for safe dataframe question answering over local 
 
 Dumping an entire dataframe into an LLM prompt for every question is an inefficient way to do analytics. It burns context window on raw rows, gets expensive quickly, forces aggressive truncation for real datasets, and can still leave the model guessing instead of calculating. The better pattern is to give the model compact schema context, let it decide what statistics are needed, execute those specific dataframe operations locally, and return the computed facts as focused context for the final answer.
 
-**MCP DataFrame QA** implements that pattern for MCP-compatible assistants. It turns a local CSV, Parquet file, or Pandas dataframe into a natural-language analytics tool where the LLM proposes a typed analysis plan and the local server validates and executes that plan with read-only Pandas operations. The dataframe stays local; the model sees profiles, plans, and results rather than the full table.
+**MCP DataFrame QA** implements that pattern for MCP-compatible assistants. It turns a local CSV, Parquet file, or Pandas dataframe into a natural-language analytics tool where the LLM proposes a typed analysis plan (not code) and the local server validates and executes that plan with read-only Pandas operations (plan converted to code). The dataframe stays local, the model sees profiles, plans, and results rather than the full table.
 
 The repository ships with a prepared 91,872-row public Zillow Research housing-market dataset, so it is useful immediately after cloning while remaining small enough for GitHub and local Pandas.
 
@@ -45,7 +45,6 @@ The default dataframe is `data/zillow_metro_market.csv`, prepared from public [Z
 
 The prepared table has 91,872 rows, 11 columns, 928 geographies, and month-end observations from 2018-03-31 through 2026-05-31. The CSV is approximately 6.6 MB.
 
-This is not scraped individual listing data. It is aggregated public research data, which makes it a better open-source default: realistic enough to justify dataframe QA, compact enough to commit, and reproducible without browser automation.
 
 To rebuild the dataset from Zillow Research source CSVs:
 
@@ -70,7 +69,7 @@ This repository adopts the following approach:
 5. A deterministic read-only executor runs the approved dataframe operations.
 6. Results are returned as structured MCP content plus a concise human-readable answer.
 
-The result is a reusable MCP server for dataframe analytics with explicit production-oriented mechanisms: typed schemas, read-only execution, derived-measure validation, output caps, audit IDs, optional audit logs, and clear MCP resources/tools/prompts.
+The result is a reusable MCP server for dataframe analytics with explicit production-oriented mechanisms: typed schemas, read-only execution, derived-measure validation, output caps, audit IDs, optional audit logs, and clear MCP resources/tools/prompts. The allowed operations on the dataframe can be modified by the user by adding them to schema.py.
 
 ## Research Context
 
@@ -91,7 +90,7 @@ Relative to research prototypes and notebook-oriented dataframe agents, this rep
 - stable input and output schemas
 - a typed intermediate analysis representation
 - deterministic read-only execution
-- local dataframe execution; the only network call in the local chatbot is the selected LLM provider request
+- local dataframe execution. The only network call in the local chatbot is the selected LLM provider request
 - audit records and result-size controls
 
 ## Quick Start
@@ -461,13 +460,13 @@ Example structured result:
 
 The model gets schema, column descriptions, safe samples, and summary statistics. It does not need the full dataframe to answer most analytical questions.
 
-This follows the direction of DataFrame QA research: generate analysis from dataframe structure while minimizing dataset exposure.
+This follows the direction of DataFrame QA research (generate analysis from dataframe structure while minimizing dataset exposure).
 
 ### 2. Typed Plans as Execution Contracts
 
 Generated Pandas remains a valuable research and prototyping technique. For a shareable MCP server, this project uses a typed plan as the default because it provides a narrower execution contract and clearer validation boundary.
 
-The plan can express more than simple aggregates: derived numeric columns are represented as JSON expression trees and executed by known-safe Pandas handlers. This gives the LLM room to request custom statistics such as ratios without giving it a live Python interpreter.
+The plan can express more than simple aggregates. Derived numeric columns are represented as JSON expression trees and executed by known-safe Pandas handlers. This gives the LLM room to request custom statistics such as ratios without giving it a live Python interpreter.
 
 ### 3. Minimal Tool Surface
 
@@ -497,7 +496,7 @@ These constraints are deliberate. They keep the repository small enough to clone
 
 ## Guardrails
 
-Guardrails are treated as part of the core interface rather than as optional deployment details.
+Guardrails are treated as part of the core interface.
 
 - Read-only dataframe access
 - No filesystem writes from the analysis executor
@@ -667,7 +666,7 @@ The intended user experience is deliberately simple:
 3. Ask a question.
 4. Get a structured, capped, auditable result.
 
-The project avoids large prompt payloads, opaque Python execution, and unnecessary dataset exposure. It aims to provide a small, inspectable adapter between a dataframe and the assistant a user already uses.
+The project aims to provide a small, inspectable adapter between a dataframe and the assistant a user already uses.
 
 ## License
 
