@@ -101,6 +101,18 @@ uv run mcp-dataframe-qa --profile
 uv run mcp-dataframe-qa --ask 'What are the top metros by median list price?'
 ```
 
+For a local chatbot loop that verifies the MCP server over stdio:
+
+```bash
+uv run mcp-dataframe-chat
+```
+
+Or ask one question and exit:
+
+```bash
+uv run mcp-dataframe-chat --question 'How many metro-months had more than 10,000 active listings?'
+```
+
 Example local MCP configuration:
 
 ```json

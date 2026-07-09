@@ -42,6 +42,7 @@ parquet = [
 
 [project.scripts]
 mcp-dataframe-qa = "mcp_dataframe_qa.cli:main"
+mcp-dataframe-chat = "mcp_dataframe_qa.chatbot:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_dataframe_qa"]
