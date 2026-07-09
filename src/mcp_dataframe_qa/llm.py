@@ -23,7 +23,7 @@ MODEL_ENV = {
     "gemini": "GEMINI_MODEL",
 }
 DEFAULT_MODELS = {
-    "openai": "gpt-4.1-mini",
+    "openai": "gpt-5.4-mini",
     "anthropic": "claude-sonnet-4-5",
     "gemini": "gemini-2.5-flash",
 }

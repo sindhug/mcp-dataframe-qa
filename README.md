@@ -152,7 +152,7 @@ The local chatbot reads `.env` automatically. Set exactly one provider key:
 LLM_PROVIDER=openai      # openai, anthropic, or gemini
 
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODEL=gpt-5.4-mini
 
 ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=claude-sonnet-4-5
