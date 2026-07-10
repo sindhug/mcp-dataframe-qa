@@ -225,13 +225,22 @@ uv run mcp-dataframe-qa --data ~/Downloads/my_data.csv --init-config
 ```
 
 This writes `dataframe_qa_my_data.yaml` with every column already listed under its
-real name, a guessed `semantic_type` where the column name makes it obvious (a column
-ending in `_id` becomes `identifier`, a column named `price` becomes `currency`), and
-blank `description` and `synonyms` fields for you to fill in. A wrong guess is worse
-than no guess, so ambiguous numeric columns are left blank instead of labeled with a
-false-confidence type. Pass `--out <path>` to control the filename.
+real name. If an LLM provider is configured (the same `.env` used everywhere else in
+this repo), it sends one batched request with every column's name, dtype, and a
+handful of real sample values, and drafts a `description`, `semantic_type`, and
+`synonyms` for each column from that. Reading actual values catches things a
+name-based guess can't, for example recognizing that a column called `Discount` holds
+a 0-1 fraction rather than a count, or noting that a `budget` column uses `0` to mean
+"not reported" rather than a real zero. Pass `--out <path>` to control the filename.
 
-Open the generated file and fill in the descriptions. That's the only manual step:
+If no provider is configured, `--init-config` stops with an error telling you to set
+one up in `.env`, or pass `--no-llm` to fall back to a conservative name-based guess
+(a column ending in `_id` becomes `identifier`, a column named `price` becomes
+`currency`, ambiguous numeric columns are left blank rather than mislabeled) with
+blank `description` and `synonyms` fields.
+
+Either way, treat the generated file as a draft. Open it and correct anything that
+looks off:
 
 ```yaml
 columns:

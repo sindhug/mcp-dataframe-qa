@@ -3,8 +3,15 @@ import json
 import sys
 
 from mcp_dataframe_qa.config import load_config
+from mcp_dataframe_qa.datasets import load_dataframe
 from mcp_dataframe_qa.engine import DataFrameQA
-from mcp_dataframe_qa.scaffold import dataset_slug, write_starter_config
+from mcp_dataframe_qa.llm import (
+    LLMConfigurationError,
+    LLMResponseError,
+    load_env_file,
+    resolve_llm_config,
+)
+from mcp_dataframe_qa.scaffold import dataset_slug, describe_columns_with_llm, write_starter_config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output path for --init-config. Defaults to dataframe_qa_<name>.yaml.",
     )
     parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help=(
+            "For --init-config, skip LLM-assisted column descriptions and use the "
+            "basic name-based heuristic instead, even if a provider is configured."
+        ),
+    )
+    parser.add_argument(
         "--transport",
         default="stdio",
         help="MCP transport to use when starting the server.",
@@ -52,10 +67,35 @@ def main(argv: list | None = None) -> int:
         if not args.data:
             print("Error: --init-config requires --data <path>.", file=sys.stderr)
             return 2
+
+        column_info = None
+        if not args.no_llm:
+            load_env_file()
+            try:
+                llm_config = resolve_llm_config()
+            except LLMConfigurationError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                print(
+                    "Pass --no-llm to scaffold with the basic heuristic instead.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(f"Drafting column descriptions with {llm_config.provider}...")
+            try:
+                frame = load_dataframe(args.data)
+                column_info = describe_columns_with_llm(frame, llm_config)
+            except LLMResponseError as exc:
+                print(f"Warning: LLM description drafting failed ({exc}).", file=sys.stderr)
+                print("Falling back to the basic heuristic.", file=sys.stderr)
+                column_info = None
+
         out_path = args.out or f"dataframe_qa_{dataset_slug(args.data)}.yaml"
-        written = write_starter_config(args.data, out_path)
+        written = write_starter_config(args.data, out_path, column_info=column_info)
         print(f"Wrote {written} ({args.data} detected).")
-        print("Add descriptions and synonyms for better answers, then run:")
+        if column_info:
+            print("Review the drafted descriptions and synonyms, then run:")
+        else:
+            print("Add descriptions and synonyms for better answers, then run:")
         print(f"  uv run mcp-dataframe-chat --config {written}")
         return 0
 
