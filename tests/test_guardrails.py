@@ -57,6 +57,7 @@ def test_derived_ratio_can_be_aggregated() -> None:
     assert result.table.rows == [
         {
             "neighborhood": "SOMA",
+            "row_count": 2,
             "median_price_per_sqft": 785.1973684210527,
         }
     ]
@@ -265,6 +266,38 @@ def test_logical_and_rejects_nonboolean_operand() -> None:
 
     assert result.kind == "error"
     assert "requires boolean operands" in result.answer
+
+
+def test_grouped_result_surfaces_row_count() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            group_by=["neighborhood"],
+            metrics=[Metric(fn="avg", column="price", name="avg_price")],
+            sort=[SortSpec(column="neighborhood", direction="asc")],
+        )
+    )
+
+    assert result.kind == "table"
+    assert result.table is not None
+    rows_by_neighborhood = {row["neighborhood"]: row["row_count"] for row in result.table.rows}
+    # Mission appears 3 times in the fixture data; a lone group of 1 shouldn't
+    # be indistinguishable from one backed by many rows.
+    assert rows_by_neighborhood["Mission"] == 3
+
+
+def test_grouped_result_skips_row_count_when_metric_claims_the_name() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            group_by=["neighborhood"],
+            metrics=[Metric(fn="count", column="*", name="row_count")],
+        )
+    )
+
+    assert result.kind == "table"
+    assert result.table is not None
+    assert result.table.columns == ["neighborhood", "row_count"]
 
 
 def test_logical_not_rejects_right_field() -> None:

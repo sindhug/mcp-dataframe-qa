@@ -23,7 +23,7 @@ def test_top_metros_by_median_list_price() -> None:
     result = default_qa().query("What are the top metros by median list price?")
     assert result.kind == "table"
     assert result.table is not None
-    assert result.table.columns == ["region_name", "median_list_price"]
+    assert result.table.columns == ["region_name", "row_count", "median_list_price"]
     assert len(result.table.rows) == 10
 
 

@@ -146,7 +146,13 @@ def _compute_series(frame: pd.DataFrame, metric_fn: str, column: str) -> Any:
 
 def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
     grouped = frame.groupby(plan.group_by, dropna=False)
-    result = grouped.size().reset_index(name="__rows__")[plan.group_by]
+    group_sizes = grouped.size().reset_index(name="row_count")
+    reserved_names = {metric.output_name for metric in plan.metrics}
+    # How many rows back each group's aggregates matters: a tiny group can
+    # otherwise dominate a ranking by average as if it were as reliable as a
+    # group with thousands of rows. Surface it unless a metric already claims
+    # that output name.
+    result = group_sizes if "row_count" not in reserved_names else group_sizes[plan.group_by]
 
     for metric in plan.metrics:
         output = metric.output_name
