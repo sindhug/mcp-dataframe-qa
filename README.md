@@ -406,12 +406,36 @@ For questions that need custom statistics, the plan can include derived columns.
 }
 ```
 
+Rate and proportion questions ("how often does X happen") work the same way: derive a 0/1 indicator column with a comparison, then average it.
+
+```json
+{
+  "derive": [
+    {
+      "name": "is_home_win",
+      "expr": {
+        "op": "==",
+        "left": { "op": "column", "column": "game_location" },
+        "right": { "op": "literal", "value": "H" }
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "fn": "avg",
+      "column": "is_home_win",
+      "as": "home_win_rate"
+    }
+  ]
+}
+```
+
 The server validates that plan before anything runs:
 
 - columns must exist
 - derived columns must have simple, non-conflicting names
-- derived expressions may use only approved JSON operators: `column`, `literal`, `add`, `subtract`, `multiply`, `divide`, and `ratio`
-- arithmetic expressions must use numeric operands
+- derived expressions may use only approved JSON operators: `column`, `literal`, `add`, `subtract`, `multiply`, `divide`, `ratio`, and the comparisons `==`, `!=`, `<`, `<=`, `>`, `>=`
+- arithmetic expressions must use numeric operands; comparisons may compare any matching column and literal type
 - filter operators and metric functions must be allowed by the schema
 - metric functions must be compatible with the referenced column type
 - result limits are enforced
