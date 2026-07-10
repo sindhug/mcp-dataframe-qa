@@ -9,6 +9,7 @@ from mcp_dataframe_qa.schemas import (
     AnalysisPlan,
     ChartSpec,
     Expression,
+    Metric,
     StructuredResult,
     TableResult,
 )
@@ -134,22 +135,25 @@ def _apply_filters(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
     return filtered
 
 
-def _compute_series(frame: pd.DataFrame, metric_fn: str, column: str) -> Any:
-    if metric_fn == "count":
+def _compute_series(frame: pd.DataFrame, metric: Metric) -> Any:
+    column = metric.column
+    if metric.fn == "count":
         return len(frame) if column == "*" else frame[column].count()
-    if metric_fn in {"avg", "mean"}:
+    if metric.fn in {"avg", "mean"}:
         return frame[column].mean()
-    if metric_fn == "median":
+    if metric.fn == "median":
         return frame[column].median()
-    if metric_fn == "sum":
+    if metric.fn == "sum":
         return frame[column].sum()
-    if metric_fn == "min":
+    if metric.fn == "min":
         return frame[column].min()
-    if metric_fn == "max":
+    if metric.fn == "max":
         return frame[column].max()
-    if metric_fn == "nunique":
+    if metric.fn == "nunique":
         return frame[column].nunique()
-    raise ValueError(f"Unsupported metric function: {metric_fn}")
+    if metric.fn == "corr":
+        return frame[column].corr(frame[metric.column2])
+    raise ValueError(f"Unsupported metric function: {metric.fn}")
 
 
 def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
@@ -178,6 +182,10 @@ def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
             values = grouped[metric.column].max().reset_index(name=output)
         elif metric.fn == "nunique":
             values = grouped[metric.column].nunique().reset_index(name=output)
+        elif metric.fn == "corr":
+            values = grouped.apply(
+                lambda g, c=metric.column, c2=metric.column2: g[c].corr(g[c2])
+            ).reset_index(name=output)
         else:
             raise ValueError(f"Unsupported metric function: {metric.fn}")
         result = result.merge(values, on=plan.group_by, how="left")
@@ -225,7 +233,7 @@ def execute_plan(
         )
     else:
         values = [
-            {metric.output_name: _json_safe(_compute_series(filtered, metric.fn, metric.column))}
+            {metric.output_name: _json_safe(_compute_series(filtered, metric))}
             for metric in plan.metrics
         ]
         if len(values) == 1:

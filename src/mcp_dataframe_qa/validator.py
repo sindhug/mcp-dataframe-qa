@@ -238,6 +238,16 @@ def validate_plan(plan: AnalysisPlan, dataset: Dataset, limits: LimitsConfig) ->
         if metric.column == "*":
             raise PlanValidationError("Only count may use column='*'.")
         _validate_columns([metric.column], known_columns, "metric")
+        if metric.fn == "corr":
+            if not metric.column2:
+                raise PlanValidationError("Metric 'corr' requires column2.")
+            _validate_columns([metric.column2], known_columns, "metric")
+            if metric.column not in numeric_columns or metric.column2 not in numeric_columns:
+                raise PlanValidationError(
+                    "Metric 'corr' requires numeric columns, got "
+                    f"'{metric.column}' and '{metric.column2}'."
+                )
+            continue
         if metric.fn in NUMERIC_METRIC_FNS and metric.column not in numeric_columns:
             raise PlanValidationError(
                 f"Metric '{metric.fn}' requires numeric column '{metric.column}'."

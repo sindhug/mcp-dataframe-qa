@@ -173,7 +173,12 @@ def _prompt(question: str, profile: Mapping[str, Any]) -> dict[str, str]:
         "Return only a JSON object. Do not include markdown or prose. "
         "Use only columns present in the dataframe profile. "
         "Allowed filter ops: ==, !=, <, <=, >, >=, in, not_in, contains. "
-        "Allowed metric functions: count, sum, avg, mean, median, min, max, nunique. "
+        "Allowed metric functions: count, sum, avg, mean, median, min, max, nunique, corr. "
+        "corr computes the Pearson correlation between metric.column and metric.column2, both "
+        'numeric columns, for example {"fn":"corr","column":"budget",'
+        '"column2":"revenue","as":"budget_revenue_corr"}. Use it for \'is X correlated '
+        "with Y' or 'does X relate to Y' questions instead of just reporting separate averages, "
+        "which does not answer whether they move together. "
         "For custom numeric measures such as ratios, use the optional derive list. "
         "Allowed expression ops are column, literal, add, subtract, multiply, divide, ratio, "
         "==, !=, <, <=, >, >=, and, or, not, year_of, month_of, day_of_week, date_diff. "

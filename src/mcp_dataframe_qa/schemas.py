@@ -5,13 +5,30 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 FilterOp = Literal["==", "!=", "<", "<=", ">", ">=", "in", "not_in", "contains"]
-MetricFn = Literal["count", "sum", "avg", "mean", "median", "min", "max", "nunique"]
+MetricFn = Literal["count", "sum", "avg", "mean", "median", "min", "max", "nunique", "corr"]
 SortDirection = Literal["asc", "desc"]
 ResultKind = Literal["scalar", "table", "error"]
 ExpressionOp = Literal[
-    "column", "literal", "add", "subtract", "multiply", "divide", "ratio",
-    "==", "!=", "<", "<=", ">", ">=", "and", "or", "not",
-    "year_of", "month_of", "day_of_week", "date_diff",
+    "column",
+    "literal",
+    "add",
+    "subtract",
+    "multiply",
+    "divide",
+    "ratio",
+    "==",
+    "!=",
+    "<",
+    "<=",
+    ">",
+    ">=",
+    "and",
+    "or",
+    "not",
+    "year_of",
+    "month_of",
+    "day_of_week",
+    "date_diff",
 ]
 
 
@@ -28,6 +45,7 @@ class Metric(BaseModel):
 
     fn: MetricFn
     column: str = "*"
+    column2: str | None = None
     name: str | None = Field(default=None, alias="as")
 
     @property
@@ -36,6 +54,8 @@ class Metric(BaseModel):
             return self.name
         if self.fn == "count" and self.column == "*":
             return "count"
+        if self.fn == "corr" and self.column2:
+            return f"corr_{self.column}_{self.column2}"
         return f"{self.fn}_{self.column}"
 
 
