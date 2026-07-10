@@ -5,7 +5,7 @@ import pandas as pd
 
 from mcp_dataframe_qa.config import LimitsConfig
 from mcp_dataframe_qa.datasets import Dataset
-from mcp_dataframe_qa.schemas import AnalysisPlan, Expression
+from mcp_dataframe_qa.schemas import AnalysisPlan, Expression, Metric
 
 MAX_DERIVED_COLUMNS = 20
 MAX_EXPRESSION_DEPTH = 8
@@ -235,6 +235,104 @@ def _validate_explode(plan: AnalysisPlan, dataset: Dataset) -> None:
             )
 
 
+def _validate_metrics(
+    metrics: list[Metric], known_columns: set[str], numeric_columns: set[str], context: str
+) -> None:
+    for metric in metrics:
+        if metric.fn == "count" and metric.column == "*":
+            continue
+        if metric.column == "*":
+            raise PlanValidationError("Only count may use column='*'.")
+        _validate_columns([metric.column], known_columns, context)
+        if metric.fn == "corr":
+            if not metric.column2:
+                raise PlanValidationError("Metric 'corr' requires column2.")
+            _validate_columns([metric.column2], known_columns, context)
+            if metric.column not in numeric_columns or metric.column2 not in numeric_columns:
+                raise PlanValidationError(
+                    "Metric 'corr' requires numeric columns, got "
+                    f"'{metric.column}' and '{metric.column2}'."
+                )
+            continue
+        if metric.fn in NUMERIC_METRIC_FNS and metric.column not in numeric_columns:
+            raise PlanValidationError(
+                f"Metric '{metric.fn}' requires numeric column '{metric.column}'."
+            )
+
+
+def _intermediate_columns(
+    plan: AnalysisPlan, source_numeric_columns: set[str]
+) -> tuple[set[str], set[str]]:
+    """Columns (and which of them are numeric) available on the grouped result.
+
+    count/sum/avg/mean/median/nunique/corr always produce numeric output.
+    min/max only do when applied to an already-numeric source column.
+    """
+    known = set(plan.group_by)
+    numeric: set[str] = set()
+    reserved = {metric.output_name for metric in plan.metrics}
+    if "row_count" not in reserved:
+        known.add("row_count")
+        numeric.add("row_count")
+    for metric in plan.metrics:
+        known.add(metric.output_name)
+        if metric.fn in {"count", "sum", "avg", "mean", "median", "nunique", "corr"}:
+            numeric.add(metric.output_name)
+        elif metric.fn in {"min", "max"} and metric.column in source_numeric_columns:
+            numeric.add(metric.output_name)
+    return known, numeric
+
+
+def _validate_regroup(plan: AnalysisPlan, numeric_columns: set[str]) -> None:
+    regroup = plan.regroup
+    if regroup is None:
+        return
+    if not plan.group_by:
+        raise PlanValidationError("regroup requires the plan to have a group_by.")
+    if regroup.group_by and not regroup.metrics:
+        raise PlanValidationError("regroup.metrics is required when regroup.group_by is set.")
+    if regroup.metrics and not regroup.group_by:
+        raise PlanValidationError(
+            "regroup.metrics requires regroup.group_by; omit both to just derive, sort, "
+            "and limit the grouped result."
+        )
+
+    known, numeric = _intermediate_columns(plan, numeric_columns)
+    date_columns: set[str] = set()
+
+    for derived in regroup.derive:
+        if not DERIVED_NAME_PATTERN.match(derived.name):
+            raise PlanValidationError(
+                f"Derived column name '{derived.name}' must be a simple identifier."
+            )
+        if derived.name in known:
+            raise PlanValidationError(
+                f"regroup derived column '{derived.name}' conflicts with an existing column."
+            )
+        kind = _validate_expression(derived.expr, known, numeric, date_columns)
+        known.add(derived.name)
+        if kind in {"numeric", "boolean"}:
+            numeric.add(derived.name)
+
+    _validate_columns(regroup.group_by, known, "regroup group_by")
+    _validate_metrics(regroup.metrics, known, numeric, "regroup metric")
+
+    if regroup.group_by:
+        result_columns = set(regroup.group_by) | {m.output_name for m in regroup.metrics}
+    else:
+        result_columns = known
+    for sort in regroup.sort:
+        if sort.column not in result_columns:
+            raise PlanValidationError(
+                "regroup sort column '{}' is not produced by regroup. Result columns: {}".format(
+                    sort.column, ", ".join(sorted(result_columns))
+                )
+            )
+
+    if regroup.limit is not None and regroup.limit < 1:
+        raise PlanValidationError("regroup limit must be at least 1.")
+
+
 def validate_plan(plan: AnalysisPlan, dataset: Dataset, limits: LimitsConfig) -> AnalysisPlan:
     if not plan.metrics:
         raise PlanValidationError("Analysis plan must include at least one metric.")
@@ -246,26 +344,8 @@ def validate_plan(plan: AnalysisPlan, dataset: Dataset, limits: LimitsConfig) ->
     _validate_columns([condition.column for condition in plan.filters], known_columns, "filter")
     _validate_columns(plan.group_by, known_columns, "group_by")
 
-    for metric in plan.metrics:
-        if metric.fn == "count" and metric.column == "*":
-            continue
-        if metric.column == "*":
-            raise PlanValidationError("Only count may use column='*'.")
-        _validate_columns([metric.column], known_columns, "metric")
-        if metric.fn == "corr":
-            if not metric.column2:
-                raise PlanValidationError("Metric 'corr' requires column2.")
-            _validate_columns([metric.column2], known_columns, "metric")
-            if metric.column not in numeric_columns or metric.column2 not in numeric_columns:
-                raise PlanValidationError(
-                    "Metric 'corr' requires numeric columns, got "
-                    f"'{metric.column}' and '{metric.column2}'."
-                )
-            continue
-        if metric.fn in NUMERIC_METRIC_FNS and metric.column not in numeric_columns:
-            raise PlanValidationError(
-                f"Metric '{metric.fn}' requires numeric column '{metric.column}'."
-            )
+    _validate_metrics(plan.metrics, known_columns, numeric_columns, "metric")
+    _validate_regroup(plan, numeric_columns)
 
     result_columns = _known_result_columns(plan)
     for sort in plan.sort:
@@ -283,5 +363,8 @@ def validate_plan(plan: AnalysisPlan, dataset: Dataset, limits: LimitsConfig) ->
         raise PlanValidationError("Plan limit must be at least 1.")
     else:
         plan.limit = min(plan.limit, limits.max_rows_returned)
+
+    if plan.regroup is not None and plan.regroup.limit is not None:
+        plan.regroup.limit = min(plan.regroup.limit, limits.max_rows_returned)
 
     return plan

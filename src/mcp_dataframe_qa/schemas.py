@@ -83,6 +83,25 @@ class DerivedColumn(BaseModel):
     expr: Expression
 
 
+class Regroup(BaseModel):
+    """A second aggregation pass over the result of the plan's own group_by.
+
+    Lets a plan answer "average per period" or "range within group" questions
+    (average annual rainfall, single-season Elo swing) that need one
+    aggregation to build an intermediate per-group table, then either a
+    second, coarser aggregation over it, or just a derived column, sort, and
+    limit on it without aggregating further.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    derive: list[DerivedColumn] = Field(default_factory=list)
+    group_by: list[str] = Field(default_factory=list)
+    metrics: list[Metric] = Field(default_factory=list)
+    sort: list[SortSpec] = Field(default_factory=list)
+    limit: int | None = None
+
+
 class AnalysisPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -93,6 +112,7 @@ class AnalysisPlan(BaseModel):
     metrics: list[Metric] = Field(default_factory=list)
     sort: list[SortSpec] = Field(default_factory=list)
     limit: int | None = None
+    regroup: Regroup | None = None
 
 
 class TableResult(BaseModel):

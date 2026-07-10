@@ -217,6 +217,22 @@ def _prompt(question: str, profile: Mapping[str, Any]) -> dict[str, str]:
         "instead of by the whole combination. Only use explode for columns whose profile entry "
         "has a delimiter, and never on a dataset-wide basis when the question is about whole "
         "rows (for example counting movies), since it changes the row count. "
+        "Some questions need two aggregation passes: 'average annual X' needs a sum per group "
+        "per year before it can be averaged across years, and 'biggest swing/range within a "
+        "group' needs a max and min per group before their difference can be ranked. A single "
+        "group_by cannot do this alone. Use the optional top-level regroup object for the "
+        "second pass: regroup.group_by (coarser keys, a subset of the outer group_by, omit "
+        "entirely if there is no second grouping), regroup.metrics (aggregating the outer "
+        "metrics' output names, required only if regroup.group_by is set), regroup.derive "
+        "(computes a new column from the outer metrics' output names, for example "
+        '{"name":"swing","expr":{"op":"subtract","left":{"op":"column","column":"max_elo"},'
+        '"right":{"op":"column","column":"min_elo"}}}), and regroup.sort/regroup.limit for the '
+        "final ranking. For 'average annual rainfall by location': outer group_by "
+        "[location, year] with sum(rainfall) as yearly_total, then regroup.group_by [location] "
+        "with avg(yearly_total). For 'biggest single-season Elo swing': outer group_by "
+        "[team, season] with max(elo) as max_elo and min(elo) as min_elo, then regroup.derive "
+        "the swing and regroup.sort/limit, with no regroup.group_by since there is no further "
+        "grouping, just a ranking of the outer groups. "
         "Derived expressions must be JSON trees, never Python code. "
         'For row counts use {"fn":"count","column":"*","as":"count"}. '
         "For top-N questions, set group_by, one metric, descending sort on the metric alias, "

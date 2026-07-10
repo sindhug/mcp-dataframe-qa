@@ -10,6 +10,7 @@ from mcp_dataframe_qa.schemas import (
     ChartSpec,
     Expression,
     Metric,
+    Regroup,
     StructuredResult,
     TableResult,
 )
@@ -179,17 +180,19 @@ def _compute_series(frame: pd.DataFrame, metric: Metric) -> Any:
     raise ValueError(f"Unsupported metric function: {metric.fn}")
 
 
-def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
-    grouped = frame.groupby(plan.group_by, dropna=False)
+def _compute_grouped(
+    frame: pd.DataFrame, group_by: list[str], metrics: list[Metric]
+) -> pd.DataFrame:
+    grouped = frame.groupby(group_by, dropna=False)
     group_sizes = grouped.size().reset_index(name="row_count")
-    reserved_names = {metric.output_name for metric in plan.metrics}
+    reserved_names = {metric.output_name for metric in metrics}
     # How many rows back each group's aggregates matters: a tiny group can
     # otherwise dominate a ranking by average as if it were as reliable as a
     # group with thousands of rows. Surface it unless a metric already claims
     # that output name.
-    result = group_sizes if "row_count" not in reserved_names else group_sizes[plan.group_by]
+    result = group_sizes if "row_count" not in reserved_names else group_sizes[group_by]
 
-    for metric in plan.metrics:
+    for metric in metrics:
         output = metric.output_name
         if metric.fn == "count" and metric.column == "*":
             values = grouped.size().reset_index(name=output)
@@ -211,9 +214,37 @@ def _compute_grouped(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
             ).reset_index(name=output)
         else:
             raise ValueError(f"Unsupported metric function: {metric.fn}")
-        result = result.merge(values, on=plan.group_by, how="left")
+        result = result.merge(values, on=group_by, how="left")
 
     return result
+
+
+def _apply_regroup(stage1: pd.DataFrame, regroup: Regroup) -> pd.DataFrame:
+    """Run the plan's regroup stage over the result of its own group_by.
+
+    With regroup.group_by set, this is a genuine second aggregation (for
+    example averaging per-year sums into a per-location average). With it
+    empty, there's nothing left to aggregate, so this just adds any derived
+    columns and lets sort/limit pick the top rows, for example ranking teams
+    by an Elo swing derived from that team-season's own max and min.
+    """
+    enriched = stage1
+    if regroup.derive:
+        enriched = stage1.copy()
+        for derived in regroup.derive:
+            enriched[derived.name] = _evaluate_expression(enriched, derived.expr)
+
+    final = (
+        _compute_grouped(enriched, regroup.group_by, regroup.metrics)
+        if regroup.group_by
+        else enriched
+    )
+
+    for sort in regroup.sort:
+        final = final.sort_values(sort.column, ascending=sort.direction == "asc")
+    if regroup.limit is not None:
+        final = final.head(regroup.limit)
+    return final
 
 
 def _format_answer(plan: AnalysisPlan, result: StructuredResult) -> str:
@@ -238,14 +269,21 @@ def execute_plan(
     filtered = _apply_filters(frame, plan)
 
     if plan.group_by:
-        output = _compute_grouped(filtered, plan)
-        for sort in plan.sort:
-            output = output.sort_values(sort.column, ascending=sort.direction == "asc")
-        output = output.head(plan.limit)
+        output = _compute_grouped(filtered, plan.group_by, plan.metrics)
+        if plan.regroup:
+            output = _apply_regroup(output, plan.regroup)
+        else:
+            for sort in plan.sort:
+                output = output.sort_values(sort.column, ascending=sort.direction == "asc")
+            output = output.head(plan.limit)
         rows = _rows_safe(output.to_dict(orient="records"), limits.max_cell_chars)
         table = TableResult(columns=list(output.columns), rows=rows)
         chart = None
-        if plan.group_by and plan.metrics:
+        if plan.regroup and plan.regroup.group_by and plan.regroup.metrics:
+            chart = ChartSpec(
+                kind="bar", x=plan.regroup.group_by[0], y=plan.regroup.metrics[0].output_name
+            )
+        elif (not plan.regroup or not plan.regroup.group_by) and plan.metrics:
             chart = ChartSpec(kind="bar", x=plan.group_by[0], y=plan.metrics[0].output_name)
         result = StructuredResult(
             kind="table",
