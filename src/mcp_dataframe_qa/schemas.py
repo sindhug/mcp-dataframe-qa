@@ -10,7 +10,7 @@ SortDirection = Literal["asc", "desc"]
 ResultKind = Literal["scalar", "table", "error"]
 ExpressionOp = Literal[
     "column", "literal", "add", "subtract", "multiply", "divide", "ratio",
-    "==", "!=", "<", "<=", ">", ">=",
+    "==", "!=", "<", "<=", ">", ">=", "and", "or", "not",
 ]
 
 

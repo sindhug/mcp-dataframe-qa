@@ -12,6 +12,7 @@ MAX_EXPRESSION_DEPTH = 8
 DERIVED_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 BINARY_NUMERIC_OPS = {"add", "subtract", "multiply", "divide", "ratio"}
 COMPARISON_OPS = {"==", "!=", "<", "<=", ">", ">="}
+LOGICAL_BINARY_OPS = {"and", "or"}
 NUMERIC_METRIC_FNS = {"avg", "mean", "median", "sum"}
 
 
@@ -65,6 +66,14 @@ def _require_numeric(kind: str, expr: Expression) -> None:
         raise PlanValidationError(f"Expression op '{expr.op}' requires numeric operands.")
 
 
+def _require_boolean(kind: str, expr: Expression) -> None:
+    if kind != "boolean":
+        raise PlanValidationError(
+            f"Expression op '{expr.op}' requires boolean operands, such as the "
+            "result of a comparison or another and/or/not expression."
+        )
+
+
 def _validate_expression(
     expr: Expression,
     known_columns: set[str],
@@ -107,7 +116,27 @@ def _validate_expression(
         _require_no_fields(expr, {"column": expr.column, "value": expr.value})
         _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
         _validate_expression(expr.right, known_columns, numeric_columns, depth + 1)
-        return "numeric"
+        return "boolean"
+
+    if expr.op in LOGICAL_BINARY_OPS:
+        if expr.left is None or expr.right is None:
+            raise PlanValidationError(f"Expression op '{expr.op}' requires left and right.")
+        _require_no_fields(expr, {"column": expr.column, "value": expr.value})
+        left_kind = _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
+        right_kind = _validate_expression(expr.right, known_columns, numeric_columns, depth + 1)
+        _require_boolean(left_kind, expr)
+        _require_boolean(right_kind, expr)
+        return "boolean"
+
+    if expr.op == "not":
+        if expr.left is None:
+            raise PlanValidationError("Expression op 'not' requires left.")
+        _require_no_fields(
+            expr, {"column": expr.column, "value": expr.value, "right": expr.right}
+        )
+        operand_kind = _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
+        _require_boolean(operand_kind, expr)
+        return "boolean"
 
     raise PlanValidationError(f"Unsupported expression op: {expr.op}")
 
@@ -134,7 +163,7 @@ def _validate_derived_columns(plan: AnalysisPlan, dataset: Dataset) -> tuple[set
         kind = _validate_expression(derived.expr, known_columns, numeric_columns)
         known_columns.add(derived.name)
         derived_names.add(derived.name)
-        if kind == "numeric":
+        if kind in {"numeric", "boolean"}:
             numeric_columns.add(derived.name)
 
     return known_columns, numeric_columns

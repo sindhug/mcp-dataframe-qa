@@ -55,9 +55,15 @@ def _evaluate_expression(frame: pd.DataFrame, expr: Expression) -> Any:
         return frame[expr.column]
     if expr.op == "literal":
         return expr.value
+    if expr.op == "not":
+        return ~_evaluate_expression(frame, expr.left)
 
     left = _evaluate_expression(frame, expr.left)
     right = _evaluate_expression(frame, expr.right)
+    if expr.op == "and":
+        return left & right
+    if expr.op == "or":
+        return left | right
     if expr.op == "add":
         return left + right
     if expr.op == "subtract":

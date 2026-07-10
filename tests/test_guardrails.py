@@ -170,3 +170,116 @@ def test_comparison_expression_rejects_missing_operand() -> None:
 
     assert result.kind == "error"
     assert "requires left and right" in result.answer
+
+
+def _is_status(value: str) -> Expression:
+    return Expression(
+        op="==",
+        left=Expression(op="column", column="status"),
+        right=Expression(op="literal", value=value),
+    )
+
+
+def _is_neighborhood(value: str) -> Expression:
+    return Expression(
+        op="==",
+        left=Expression(op="column", column="neighborhood"),
+        right=Expression(op="literal", value=value),
+    )
+
+
+def test_derived_and_combines_two_comparisons() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="active_in_mission",
+                    expr=Expression(
+                        op="and", left=_is_status("active"), right=_is_neighborhood("Mission")
+                    ),
+                )
+            ],
+            metrics=[Metric(fn="sum", column="active_in_mission", name="count")],
+        )
+    )
+
+    assert result.kind == "scalar"
+    assert result.value == 2
+
+
+def test_derived_or_combines_two_comparisons() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="active_or_mission",
+                    expr=Expression(
+                        op="or", left=_is_status("active"), right=_is_neighborhood("Mission")
+                    ),
+                )
+            ],
+            metrics=[Metric(fn="sum", column="active_or_mission", name="count")],
+        )
+    )
+
+    assert result.kind == "scalar"
+    assert result.value == 10
+
+
+def test_derived_not_negates_a_comparison() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="not_active", expr=Expression(op="not", left=_is_status("active"))
+                )
+            ],
+            metrics=[Metric(fn="sum", column="not_active", name="count")],
+        )
+    )
+
+    assert result.kind == "scalar"
+    assert result.value == 3
+
+
+def test_logical_and_rejects_nonboolean_operand() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="bad_and",
+                    expr=Expression(
+                        op="and",
+                        left=Expression(op="column", column="price"),
+                        right=_is_status("active"),
+                    ),
+                )
+            ],
+            metrics=[Metric(fn="sum", column="bad_and", name="count")],
+        )
+    )
+
+    assert result.kind == "error"
+    assert "requires boolean operands" in result.answer
+
+
+def test_logical_not_rejects_right_field() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="bad_not",
+                    expr=Expression(op="not", left=_is_status("active"), right=_is_status("sold")),
+                )
+            ],
+            metrics=[Metric(fn="sum", column="bad_not", name="count")],
+        )
+    )
+
+    assert result.kind == "error"
+    assert "does not allow field" in result.answer
