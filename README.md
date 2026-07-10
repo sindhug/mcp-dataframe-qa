@@ -30,7 +30,12 @@ The design goal is simple: **English in, validated dataframe operations out, no 
 - Return structured MCP results in addition to prose
 - Expose schema through MCP resources instead of placing raw data in prompts
 - Use OpenAI, Anthropic, or Gemini to generate typed analysis plans
-- Support validated derived measures such as ratios and per-unit metrics
+- Support validated derived measures: arithmetic, comparisons, boolean `and`/`or`/`not`, date parts and date differences, and Pearson correlation
+- Explode delimited tag-list columns (`"Action|Adventure"`) into one row per tag for group-bys
+- Run a second aggregation pass (`regroup`) for "average per period" and "range within group" questions
+- Surface each grouped row's sample size (`row_count`) so a tiny or missing-value group can't silently win a ranking
+- Draft `--init-config` column descriptions with an LLM that reads real sample values, not just column names
+- Retry once with the validation error when an LLM-generated plan fails schema validation, instead of crashing
 - Enforce read-only execution, plan validation, output caps, and cell caps
 - Return audit IDs for every query, with optional JSONL audit logs
 - Keep the MCP tool surface small, composable, and easy for models to use
@@ -230,8 +235,11 @@ this repo), it sends one batched request with every column's name, dtype, and a
 handful of real sample values, and drafts a `description`, `semantic_type`, and
 `synonyms` for each column from that. Reading actual values catches things a
 name-based guess can't, for example recognizing that a column called `Discount` holds
-a 0-1 fraction rather than a count, or noting that a `budget` column uses `0` to mean
-"not reported" rather than a real zero. Pass `--out <path>` to control the filename.
+a 0-1 fraction rather than a count, that a `budget` column uses `0` to mean
+"not reported" rather than a real zero, or that a `genres` column packs multiple
+values into one string (`"Action|Adventure"`), in which case it sets
+`semantic_type: tag_list` and a `delimiter` so the column can be exploded into one
+row per tag later. Pass `--out <path>` to control the filename.
 
 If no provider is configured, `--init-config` stops with an error telling you to set
 one up in `.env`, or pass `--no-llm` to fall back to a conservative name-based guess
@@ -439,14 +447,68 @@ Rate and proportion questions ("how often does X happen") work the same way: der
 }
 ```
 
-The server validates that plan before anything runs:
+Compound conditions combine with `and` / `or` / `not` (each `and`/`or` takes a boolean
+`left` and `right`, `not` takes only a `left`), so a question like "did the favored
+team win" can derive `(elo_i > opp_elo_i AND result == 'W') OR (elo_i < opp_elo_i AND
+result == 'L')` as one indicator column instead of a single, misleading comparison.
+
+Columns configured with `semantic_type: date` are parsed to real dates at load time,
+so `year_of` / `month_of` / `day_of_week` (each takes a `left` date column, returns an
+integer) and `date_diff` (takes a `left` and `right` date column, returns the
+difference in days) can express "which month" or "how many days between two dates."
+
+`corr` computes the Pearson correlation between two numeric columns instead of just
+reporting their separate averages:
+
+```json
+{ "metrics": [{ "fn": "corr", "column": "budget", "column2": "revenue", "as": "budget_revenue_corr" }] }
+```
+
+A delimited tag-list column (`semantic_type: tag_list`, for example genres stored as
+`"Action|Adventure"`) can be split into one row per tag before grouping, so "which
+genre" groups by individual genre instead of by the whole combination:
+
+```json
+{
+  "explode": ["genres"],
+  "group_by": ["genres"],
+  "metrics": [{ "fn": "avg", "column": "vote_average", "as": "avg_rating" }]
+}
+```
+
+"Average per period" and "range within group" questions need two aggregation passes:
+one to build a per-group-per-period table, then either a coarser aggregation over it
+or just a derived column and a ranking. The optional `regroup` object runs that second
+pass over the plan's own group_by output (including its `row_count` column):
+
+```json
+{
+  "group_by": ["location", "year"],
+  "metrics": [{ "fn": "sum", "column": "rainfall", "as": "yearly_total" }],
+  "regroup": {
+    "group_by": ["location"],
+    "metrics": [{ "fn": "avg", "column": "yearly_total", "as": "avg_annual_rainfall" }],
+    "sort": [{ "column": "avg_annual_rainfall", "direction": "desc" }],
+    "limit": 1
+  }
+}
+```
+
+`regroup.group_by` can also be omitted entirely, for questions that need a derived
+column ranked across the first pass's groups without a second, coarser grouping, for
+example the biggest single-season swing between a group's own max and min.
+
+The server validates every plan before anything runs:
 
 - columns must exist
 - derived columns must have simple, non-conflicting names
-- derived expressions may use only approved JSON operators: `column`, `literal`, `add`, `subtract`, `multiply`, `divide`, `ratio`, and the comparisons `==`, `!=`, `<`, `<=`, `>`, `>=`
-- arithmetic expressions must use numeric operands; comparisons may compare any matching column and literal type
+- derived expressions may use only approved JSON operators: `column`, `literal`, `add`, `subtract`, `multiply`, `divide`, `ratio`, the comparisons `==`, `!=`, `<`, `<=`, `>`, `>=`, the logical combinators `and`, `or`, `not`, and the date operators `year_of`, `month_of`, `day_of_week`, `date_diff`
+- arithmetic expressions must use numeric operands; comparisons may compare any matching column and literal type; `and`/`or`/`not` require boolean operands (the result of a comparison or another `and`/`or`/`not`); date operators require columns with `semantic_type: date`
+- `explode` only accepts columns with a configured `delimiter`
+- `regroup.metrics` is required when `regroup.group_by` is set, and not allowed otherwise
 - filter operators and metric functions must be allowed by the schema
-- metric functions must be compatible with the referenced column type
+- metric functions must be compatible with the referenced column type, `corr` requires two numeric columns
+- every grouped result includes a `row_count` column (unless a metric already claims that name), so a tiny or missing-value group can't win a ranking without that being visible
 - result limits are enforced
 - long string cells are capped
 - execution uses deterministic read-only Pandas operations
@@ -521,7 +583,7 @@ Then a planner could request:
 }
 ```
 
-For a new aggregate such as `std`, make the same kind of change in `MetricFn`, the metric validation rules, `_compute_series`, `_compute_grouped`, the LLM prompt, and tests. For larger features such as correlation, rolling windows, joins, or date bucketing, prefer adding a new typed plan node with its own validator and executor handler rather than squeezing complex behavior into a string field.
+For a new aggregate such as `std`, make the same kind of change in `MetricFn`, the metric validation rules, `_compute_series`, `_compute_grouped`, the LLM prompt, and tests. `corr` (a metric with a second `column2` field) and `regroup` (a second `derive`/`group_by`/`metrics`/`sort`/`limit` pass over the plan's own grouped output) are worked examples of this: rather than squeezing a two-column or two-stage operation into a single string field, each got its own typed shape with its own validation. For rolling windows, joins, or bucketing a continuous value into ranges (a decade from a year, a price tier from a price), the same pattern applies: add a new typed plan node with its own validator and executor handler.
 
 Example structured result:
 
@@ -531,17 +593,18 @@ Example structured result:
   "kind": "table",
   "value": null,
   "table": {
-    "columns": ["region_name", "median_list_price"],
+    "columns": ["region_name", "row_count", "median_list_price"],
     "rows": [
       {
         "region_name": "Vineyard Haven, MA",
+        "row_count": 99,
         "median_list_price": 1997667.0
       }
     ]
   },
-  "chart": null,
+  "chart": { "kind": "bar", "x": "region_name", "y": "median_list_price" },
   "warnings": [],
-  "audit_id": "qry_20260709_0001"
+  "audit_id": "qry_20260709_190010_1fa46908"
 }
 ```
 
@@ -576,7 +639,7 @@ The default path is read-only analysis. Advanced code execution, custom function
 MCP DataFrame QA is designed for practical, local dataframe analysis. It intentionally does not attempt to solve every form of tabular reasoning.
 
 - It is best suited to single-table or lightly configured dataframe workflows.
-- It prioritizes deterministic aggregates, filters, sorting, grouping, derived arithmetic measures, and summaries.
+- It prioritizes deterministic aggregates, filters, sorting, grouping, derived arithmetic/comparison/date measures, correlation, and a bounded two-stage aggregation, not open-ended statistics.
 - It does not replace a governed enterprise semantic layer.
 - It does not guarantee correct answers for ambiguous business terminology without column descriptions or synonyms.
 - It does not expose unrestricted Python execution in the default path.
@@ -599,6 +662,7 @@ Guardrails are treated as part of the core interface.
 - Output sanitization
 - Audit IDs for every query and optional JSONL audit logs
 - Pydantic schemas for plans and structured results
+- A malformed LLM-generated plan is retried once with the validation error, then reported as a clean error, instead of crashing the process
 
 The default server runs local, read-only dataframe analysis with explicit validation and capped outputs.
 
@@ -668,8 +732,9 @@ Small listing fixture used by the tests:
 - "Which neighborhoods have the highest median price per square foot?"
 
 Bring your own dataframe works best when questions map to the implemented
-operations: counts, filters, group-bys, aggregate metrics, derived numeric
-measures, sorting, limits, and capped previews.
+operations: counts, filters, group-bys, aggregate metrics (including correlation),
+derived arithmetic/comparison/date measures, tag-list exploding, two-stage
+aggregation, sorting, limits, and capped previews.
 
 ## When to Use This
 
@@ -698,14 +763,20 @@ Do not use it as a replacement for:
 - Configurable column descriptions, semantic types, and synonyms
 - Dataset profiling with capped examples
 - Pydantic `AnalysisPlan` schemas
-- Validated derived numeric expressions for ratios and arithmetic measures
+- Validated derived expressions: arithmetic, comparisons, boolean `and`/`or`/`not`, and date parts/differences
+- Date columns parsed to real datetime64 at load when configured with `semantic_type: date`
+- `corr` metric for Pearson correlation between two numeric columns
+- `explode` for delimiter-separated tag-list columns, scoped to a single plan rather than a permanent load-time transform
+- `regroup` for a second aggregation pass over a plan's own grouped output
+- `row_count` included in every grouped result so small or missing-value groups are visible, not just silently ranked
+- LLM-assisted `--init-config` scaffolding that drafts descriptions, semantic types, and delimiters from real sample values, with a name-based heuristic fallback
 - Conservative built-in natural-language planner for offline fallback testing
 - Read-only Pandas-backed execution
 - MCP resources for profiles, columns, and capped examples
 - MCP tools with structured result payloads
 - Local terminal chatbot that verifies the MCP stdio path
 - Audit IDs and optional JSONL audit log sink
-- Test coverage for common real-estate questions, guardrails, and the mocked LLM planner
+- Test coverage for common real-estate questions, guardrails, derived expressions, correlation, explode, regroup, date handling, scaffolding, and the mocked LLM planner
 
 ## Not Yet Built
 
@@ -716,6 +787,50 @@ Do not use it as a replacement for:
 - No benchmark-quality table-QA evaluation suite.
 - No enterprise authorization model or multi-tenant deployment layer.
 - No hard process-level timeout around Pandas execution; execution duration is measured and reported as a warning.
+- No operator for bucketing a continuous value into ranges (a decade from a year, a price tier from a price); this currently has to be worked around and is easy for a planner to get wrong.
+
+## Known Failure Modes
+
+These are not hypothetical gaps. Each was reproduced against real public datasets
+(retail transactions, restaurant inspections, movie metadata, weather records, NBA
+game history) while developing this project, so they are documented plainly instead
+of left implicit in "Not Yet Built."
+
+- **Bucketing a continuous value into ranges.** "How has average runtime changed by
+  decade?" or "average points per game by decade" has no `floor_div`/`mod` operator
+  to reach for, so the planner improvises with `divide`/`multiply` and gets the
+  arithmetic wrong, producing meaningless fractional buckets (`1751.40`, `1755.90`)
+  instead of real decades. There is no clean error here, just a wrong-looking table.
+- **Compound "which group is highest, and does it relate to Y" questions.** "Which
+  region has the highest average discount, and does it correlate with lower profit
+  margins?" reliably answers the first half but not the second: the planner tends to
+  show only the top region's own numbers rather than computing an actual correlation
+  across all regions with `corr`. Asking the correlation on its own ("is X correlated
+  with Y?") is answered correctly and reliably; it's the compound phrasing that gets
+  dropped.
+- **A grouped result's `row_count` reflects the group's size, not how many rows fed a
+  specific metric.** A category with 300 rows but only 2 non-null values in the
+  column being averaged still shows `row_count: 300`, which can still read as
+  statistically solid even though the average behind it is not.
+- **Ambiguous "swing" or "range" questions.** A question like "which locations see the
+  most extreme temperature swings" can mean a swing within a single row (today's max
+  minus today's min) or a swing across a whole group (the location's all-time max
+  minus all-time min). The planner sometimes picks one, sometimes the other, and when
+  it reaches for the harder, cross-group interpretation it can confuse a plan's
+  pre-aggregation `derive` with `regroup`'s post-aggregation `derive`, referencing a
+  metric's output name where a raw column is expected. This fails with a clean
+  validation error, not a crash, but does not answer the question.
+- **A malformed LLM-generated plan can still crash in rare cases.** The one
+  correction retry (see Guardrails) resolves most invalid plans, but if the model
+  produces invalid JSON shape on both the original attempt and the retry, the
+  process can still raise an unhandled error instead of a clean one.
+- **No multi-table questions.** Anything that needs joining two files ("which
+  customers in table A also appear in table B") is out of scope entirely; only one
+  configured dataframe is queried at a time.
+- **Ambiguous business terms with no column description.** If a config's `columns:`
+  section is empty or a column has no `description`/`synonyms`, a term like
+  "revenue" may not connect to a column literally named `Sales`. This is why
+  `--init-config` exists and why annotating the generated config matters.
 
 ## Contributing
 
