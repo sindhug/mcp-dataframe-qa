@@ -66,6 +66,18 @@ def _evaluate_expression(frame: pd.DataFrame, expr: Expression) -> Any:
         return left * right
     if expr.op in {"divide", "ratio"}:
         return _safe_divide(left, right)
+    if expr.op == "==":
+        return left == right
+    if expr.op == "!=":
+        return left != right
+    if expr.op == "<":
+        return left < right
+    if expr.op == "<=":
+        return left <= right
+    if expr.op == ">":
+        return left > right
+    if expr.op == ">=":
+        return left >= right
     raise ValueError(f"Unsupported expression op: {expr.op}")
 
 

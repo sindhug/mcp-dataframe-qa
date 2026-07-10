@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from mcp_dataframe_qa.config import load_config
 from mcp_dataframe_qa.engine import DataFrameQA
 from mcp_dataframe_qa.schemas import AnalysisPlan, DerivedColumn, Expression, Metric, SortSpec
@@ -102,3 +104,69 @@ def test_derived_expression_rejects_nonnumeric_arithmetic() -> None:
 
     assert result.kind == "error"
     assert "requires numeric operands" in result.answer
+
+
+def test_derived_comparison_indicator_gives_rate() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="is_sold",
+                    expr=Expression(
+                        op="==",
+                        left=Expression(op="column", column="status"),
+                        right=Expression(op="literal", value="sold"),
+                    ),
+                )
+            ],
+            metrics=[Metric(fn="avg", column="is_sold", name="sold_rate")],
+        )
+    )
+
+    assert result.kind == "scalar"
+    assert result.value == pytest.approx(1 / 12)
+
+
+def test_derived_comparison_indicator_can_be_grouped() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="is_active",
+                    expr=Expression(
+                        op="==",
+                        left=Expression(op="column", column="status"),
+                        right=Expression(op="literal", value="active"),
+                    ),
+                )
+            ],
+            group_by=["neighborhood"],
+            metrics=[Metric(fn="avg", column="is_active", name="active_rate")],
+            sort=[SortSpec(column="neighborhood", direction="asc")],
+        )
+    )
+
+    assert result.kind == "table"
+    assert result.table is not None
+    neighborhoods = [row["neighborhood"] for row in result.table.rows]
+    assert neighborhoods == sorted(neighborhoods)
+
+
+def test_comparison_expression_rejects_missing_operand() -> None:
+    qa = DataFrameQA.from_config(load_config(str(LISTINGS_CONFIG)))
+    result = qa.execute_plan(
+        AnalysisPlan(
+            derive=[
+                DerivedColumn(
+                    name="bad_flag",
+                    expr=Expression(op="==", left=Expression(op="column", column="status")),
+                )
+            ],
+            metrics=[Metric(fn="avg", column="bad_flag", name="avg_bad_flag")],
+        )
+    )
+
+    assert result.kind == "error"
+    assert "requires left and right" in result.answer

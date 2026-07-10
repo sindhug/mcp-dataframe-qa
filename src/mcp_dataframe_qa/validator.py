@@ -11,6 +11,7 @@ MAX_DERIVED_COLUMNS = 20
 MAX_EXPRESSION_DEPTH = 8
 DERIVED_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 BINARY_NUMERIC_OPS = {"add", "subtract", "multiply", "divide", "ratio"}
+COMPARISON_OPS = {"==", "!=", "<", "<=", ">", ">="}
 NUMERIC_METRIC_FNS = {"avg", "mean", "median", "sum"}
 
 
@@ -83,10 +84,12 @@ def _validate_expression(
         return "numeric" if expr.column in numeric_columns else "other"
 
     if expr.op == "literal":
-        if not isinstance(expr.value, int | float) or isinstance(expr.value, bool):
-            raise PlanValidationError("Expression op 'literal' requires a numeric value.")
+        if expr.value is None or not isinstance(expr.value, str | int | float | bool):
+            raise PlanValidationError(
+                "Expression op 'literal' requires a string, number, or boolean value."
+            )
         _require_no_fields(expr, {"column": expr.column, "left": expr.left, "right": expr.right})
-        return "numeric"
+        return "other" if isinstance(expr.value, str | bool) else "numeric"
 
     if expr.op in BINARY_NUMERIC_OPS:
         if expr.left is None or expr.right is None:
@@ -96,6 +99,14 @@ def _validate_expression(
         right_kind = _validate_expression(expr.right, known_columns, numeric_columns, depth + 1)
         _require_numeric(left_kind, expr)
         _require_numeric(right_kind, expr)
+        return "numeric"
+
+    if expr.op in COMPARISON_OPS:
+        if expr.left is None or expr.right is None:
+            raise PlanValidationError(f"Expression op '{expr.op}' requires left and right.")
+        _require_no_fields(expr, {"column": expr.column, "value": expr.value})
+        _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
+        _validate_expression(expr.right, known_columns, numeric_columns, depth + 1)
         return "numeric"
 
     raise PlanValidationError(f"Unsupported expression op: {expr.op}")

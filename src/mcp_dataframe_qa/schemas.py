@@ -8,7 +8,10 @@ FilterOp = Literal["==", "!=", "<", "<=", ">", ">=", "in", "not_in", "contains"]
 MetricFn = Literal["count", "sum", "avg", "mean", "median", "min", "max", "nunique"]
 SortDirection = Literal["asc", "desc"]
 ResultKind = Literal["scalar", "table", "error"]
-ExpressionOp = Literal["column", "literal", "add", "subtract", "multiply", "divide", "ratio"]
+ExpressionOp = Literal[
+    "column", "literal", "add", "subtract", "multiply", "divide", "ratio",
+    "==", "!=", "<", "<=", ">", ">=",
+]
 
 
 class FilterCondition(BaseModel):
