@@ -65,6 +65,40 @@ def load_dataframe(path: str) -> pd.DataFrame:
     raise ValueError(f"Unsupported data file type '{suffix}'. Use CSV, Parquet, or JSON.")
 
 
+def parse_date_columns(frame: pd.DataFrame, columns: Mapping[str, ColumnConfig]) -> pd.DataFrame:
+    """Parse columns annotated semantic_type: date into real datetime64.
+
+    Without this, a "date" column is just a string with only equality and
+    lexicographic ordering to work with, so date arithmetic (days between two
+    dates, which month something happened) has nothing to compute against.
+    """
+    date_columns = [
+        name
+        for name, config in columns.items()
+        if config.semantic_type == "date" and name in frame.columns
+    ]
+    if not date_columns:
+        return frame
+
+    frame = frame.copy()
+    for name in date_columns:
+        series = frame[name]
+        if pd.api.types.is_datetime64_any_dtype(series):
+            continue
+        before_non_null = int(series.notna().sum())
+        parsed = pd.to_datetime(series, errors="coerce")
+        after_non_null = int(parsed.notna().sum())
+        if before_non_null > 0 and after_non_null < before_non_null * 0.5:
+            print(
+                f"Warning: column '{name}' is configured as semantic_type: date, but only "
+                f"{after_non_null} of {before_non_null} non-null values parsed as dates. "
+                "Date arithmetic on this column may be unreliable.",
+                file=sys.stderr,
+            )
+        frame[name] = parsed
+    return frame
+
+
 def warn_column_mismatches(frame: pd.DataFrame, columns: Mapping[str, ColumnConfig]) -> None:
     """Warn when a config's columns and the actual dataframe's columns disagree.
 
@@ -105,6 +139,7 @@ def dataset_from_path(
 ) -> Dataset:
     resolved = Path(path).expanduser() if path else default_data_path()
     frame = load_dataframe(str(resolved))
+    frame = parse_date_columns(frame, columns or {})
     warn_column_mismatches(frame, columns or {})
     return Dataset(
         dataset_id=dataset_id,

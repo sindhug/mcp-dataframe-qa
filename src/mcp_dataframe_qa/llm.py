@@ -176,17 +176,28 @@ def _prompt(question: str, profile: Mapping[str, Any]) -> dict[str, str]:
         "Allowed metric functions: count, sum, avg, mean, median, min, max, nunique. "
         "For custom numeric measures such as ratios, use the optional derive list. "
         "Allowed expression ops are column, literal, add, subtract, multiply, divide, ratio, "
-        "==, !=, <, <=, >, >=, and, or, not. "
+        "==, !=, <, <=, >, >=, and, or, not, year_of, month_of, day_of_week, date_diff. "
         "and/or take a boolean left and right (each the result of a comparison or another "
         "and/or/not), not takes only a left. Use them to combine multiple conditions into one "
         "indicator column, for example whether a favored team won requires "
         "(elo_i > opp_elo_i AND result == 'W') OR (elo_i < opp_elo_i AND result == 'L'), not a "
         "single comparison. "
+        "year_of/month_of/day_of_week take only a left, which must be a column with "
+        "semantic_type: date, and return an integer to group or filter by. date_diff takes a "
+        "left and right, both columns with semantic_type: date, and returns the difference in "
+        "days as a number, for example to compute shipping time as "
+        "date_diff(ship_date, order_date). "
+        'These are never written as function-call strings like "month(date_col)" inside '
+        "group_by or filters, group_by only ever contains plain column names. To group or "
+        "filter by a date part, add it to derive first, for example "
+        '{"name": "order_month", "expr": {"op": "month_of", "left": '
+        '{"op": "column", "column": "order_date"}}}, then use "order_month" in '
+        "group_by or filters like any other column. "
         "For rate or proportion questions (for example 'how often does X happen'), derive a "
         "0/1 indicator column with a comparison (and and/or/not if the condition is compound), "
         "then take its avg. "
         "Derived expressions must be JSON trees, never Python code. "
-        "For row counts use {\"fn\":\"count\",\"column\":\"*\",\"as\":\"count\"}. "
+        'For row counts use {"fn":"count","column":"*","as":"count"}. '
         "For top-N questions, set group_by, one metric, descending sort on the metric alias, "
         "and limit to the requested N or 10 if no N is specified."
     )

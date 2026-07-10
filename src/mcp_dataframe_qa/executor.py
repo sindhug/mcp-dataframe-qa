@@ -57,6 +57,12 @@ def _evaluate_expression(frame: pd.DataFrame, expr: Expression) -> Any:
         return expr.value
     if expr.op == "not":
         return ~_evaluate_expression(frame, expr.left)
+    if expr.op == "year_of":
+        return _evaluate_expression(frame, expr.left).dt.year
+    if expr.op == "month_of":
+        return _evaluate_expression(frame, expr.left).dt.month
+    if expr.op == "day_of_week":
+        return _evaluate_expression(frame, expr.left).dt.dayofweek
 
     left = _evaluate_expression(frame, expr.left)
     right = _evaluate_expression(frame, expr.right)
@@ -84,6 +90,8 @@ def _evaluate_expression(frame: pd.DataFrame, expr: Expression) -> Any:
         return left > right
     if expr.op == ">=":
         return left >= right
+    if expr.op == "date_diff":
+        return (left - right).dt.days
     raise ValueError(f"Unsupported expression op: {expr.op}")
 
 

@@ -11,6 +11,7 @@ ResultKind = Literal["scalar", "table", "error"]
 ExpressionOp = Literal[
     "column", "literal", "add", "subtract", "multiply", "divide", "ratio",
     "==", "!=", "<", "<=", ">", ">=", "and", "or", "not",
+    "year_of", "month_of", "day_of_week", "date_diff",
 ]
 
 

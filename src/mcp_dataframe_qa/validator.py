@@ -13,6 +13,7 @@ DERIVED_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 BINARY_NUMERIC_OPS = {"add", "subtract", "multiply", "divide", "ratio"}
 COMPARISON_OPS = {"==", "!=", "<", "<=", ">", ">="}
 LOGICAL_BINARY_OPS = {"and", "or"}
+DATE_PART_OPS = {"year_of", "month_of", "day_of_week"}
 NUMERIC_METRIC_FNS = {"avg", "mean", "median", "sum"}
 
 
@@ -35,6 +36,14 @@ def _numeric_source_columns(dataset: Dataset) -> set[str]:
         str(column)
         for column in dataset.frame.columns
         if pd.api.types.is_numeric_dtype(dataset.frame[column])
+    }
+
+
+def _date_source_columns(dataset: Dataset) -> set[str]:
+    return {
+        str(column)
+        for column in dataset.frame.columns
+        if pd.api.types.is_datetime64_any_dtype(dataset.frame[column])
     }
 
 
@@ -74,10 +83,18 @@ def _require_boolean(kind: str, expr: Expression) -> None:
         )
 
 
+def _require_date(kind: str, expr: Expression) -> None:
+    if kind != "date":
+        raise PlanValidationError(
+            f"Expression op '{expr.op}' requires a date operand, a column with semantic_type: date."
+        )
+
+
 def _validate_expression(
     expr: Expression,
     known_columns: set[str],
     numeric_columns: set[str],
+    date_columns: set[str],
     depth: int = 0,
 ) -> str:
     if depth > MAX_EXPRESSION_DEPTH:
@@ -90,7 +107,11 @@ def _validate_expression(
             raise PlanValidationError("Expression op 'column' requires a column.")
         _require_no_fields(expr, {"value": expr.value, "left": expr.left, "right": expr.right})
         _validate_columns([expr.column], known_columns, "expression")
-        return "numeric" if expr.column in numeric_columns else "other"
+        if expr.column in numeric_columns:
+            return "numeric"
+        if expr.column in date_columns:
+            return "date"
+        return "other"
 
     if expr.op == "literal":
         if expr.value is None or not isinstance(expr.value, str | int | float | bool):
@@ -104,8 +125,12 @@ def _validate_expression(
         if expr.left is None or expr.right is None:
             raise PlanValidationError(f"Expression op '{expr.op}' requires left and right.")
         _require_no_fields(expr, {"column": expr.column, "value": expr.value})
-        left_kind = _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
-        right_kind = _validate_expression(expr.right, known_columns, numeric_columns, depth + 1)
+        left_kind = _validate_expression(
+            expr.left, known_columns, numeric_columns, date_columns, depth + 1
+        )
+        right_kind = _validate_expression(
+            expr.right, known_columns, numeric_columns, date_columns, depth + 1
+        )
         _require_numeric(left_kind, expr)
         _require_numeric(right_kind, expr)
         return "numeric"
@@ -114,16 +139,20 @@ def _validate_expression(
         if expr.left is None or expr.right is None:
             raise PlanValidationError(f"Expression op '{expr.op}' requires left and right.")
         _require_no_fields(expr, {"column": expr.column, "value": expr.value})
-        _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
-        _validate_expression(expr.right, known_columns, numeric_columns, depth + 1)
+        _validate_expression(expr.left, known_columns, numeric_columns, date_columns, depth + 1)
+        _validate_expression(expr.right, known_columns, numeric_columns, date_columns, depth + 1)
         return "boolean"
 
     if expr.op in LOGICAL_BINARY_OPS:
         if expr.left is None or expr.right is None:
             raise PlanValidationError(f"Expression op '{expr.op}' requires left and right.")
         _require_no_fields(expr, {"column": expr.column, "value": expr.value})
-        left_kind = _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
-        right_kind = _validate_expression(expr.right, known_columns, numeric_columns, depth + 1)
+        left_kind = _validate_expression(
+            expr.left, known_columns, numeric_columns, date_columns, depth + 1
+        )
+        right_kind = _validate_expression(
+            expr.right, known_columns, numeric_columns, date_columns, depth + 1
+        )
         _require_boolean(left_kind, expr)
         _require_boolean(right_kind, expr)
         return "boolean"
@@ -131,12 +160,36 @@ def _validate_expression(
     if expr.op == "not":
         if expr.left is None:
             raise PlanValidationError("Expression op 'not' requires left.")
-        _require_no_fields(
-            expr, {"column": expr.column, "value": expr.value, "right": expr.right}
+        _require_no_fields(expr, {"column": expr.column, "value": expr.value, "right": expr.right})
+        operand_kind = _validate_expression(
+            expr.left, known_columns, numeric_columns, date_columns, depth + 1
         )
-        operand_kind = _validate_expression(expr.left, known_columns, numeric_columns, depth + 1)
         _require_boolean(operand_kind, expr)
         return "boolean"
+
+    if expr.op in DATE_PART_OPS:
+        if expr.left is None:
+            raise PlanValidationError(f"Expression op '{expr.op}' requires left.")
+        _require_no_fields(expr, {"column": expr.column, "value": expr.value, "right": expr.right})
+        operand_kind = _validate_expression(
+            expr.left, known_columns, numeric_columns, date_columns, depth + 1
+        )
+        _require_date(operand_kind, expr)
+        return "numeric"
+
+    if expr.op == "date_diff":
+        if expr.left is None or expr.right is None:
+            raise PlanValidationError(f"Expression op '{expr.op}' requires left and right.")
+        _require_no_fields(expr, {"column": expr.column, "value": expr.value})
+        left_kind = _validate_expression(
+            expr.left, known_columns, numeric_columns, date_columns, depth + 1
+        )
+        right_kind = _validate_expression(
+            expr.right, known_columns, numeric_columns, date_columns, depth + 1
+        )
+        _require_date(left_kind, expr)
+        _require_date(right_kind, expr)
+        return "numeric"
 
     raise PlanValidationError(f"Unsupported expression op: {expr.op}")
 
@@ -144,6 +197,7 @@ def _validate_expression(
 def _validate_derived_columns(plan: AnalysisPlan, dataset: Dataset) -> tuple[set[str], set[str]]:
     known_columns = _source_columns(dataset)
     numeric_columns = _numeric_source_columns(dataset)
+    date_columns = _date_source_columns(dataset)
     derived_names: set[str] = set()
 
     if len(plan.derive) > MAX_DERIVED_COLUMNS:
@@ -160,7 +214,7 @@ def _validate_derived_columns(plan: AnalysisPlan, dataset: Dataset) -> tuple[set
             raise PlanValidationError(
                 f"Derived column '{derived.name}' conflicts with an existing or derived column."
             )
-        kind = _validate_expression(derived.expr, known_columns, numeric_columns)
+        kind = _validate_expression(derived.expr, known_columns, numeric_columns, date_columns)
         known_columns.add(derived.name)
         derived_names.add(derived.name)
         if kind in {"numeric", "boolean"}:
