@@ -96,6 +96,29 @@ def _evaluate_expression(frame: pd.DataFrame, expr: Expression) -> Any:
     raise ValueError(f"Unsupported expression op: {expr.op}")
 
 
+def _apply_explode(frame: pd.DataFrame, plan: AnalysisPlan, dataset: Dataset) -> pd.DataFrame:
+    """Turn a delimited tag-list column into one row per tag.
+
+    A column like genres storing "Action|Adventure|Thriller" groups by the
+    whole combination as a single category unless it's exploded first, so a
+    "highest rated genre" question would silently rank exact genre
+    combinations, most of them backed by a single movie, instead of genres.
+    Only columns with a configured delimiter can be exploded, so a plan can't
+    accidentally split an unrelated string column on a stray character.
+    """
+    if not plan.explode:
+        return frame
+
+    columns = dataset.columns or {}
+    exploded = frame
+    for column in plan.explode:
+        delimiter = columns[column].delimiter
+        split = exploded[column].astype(str).str.split(delimiter)
+        exploded = exploded.assign(**{column: split}).explode(column, ignore_index=True)
+        exploded[column] = exploded[column].str.strip()
+    return exploded
+
+
 def _apply_derived_columns(frame: pd.DataFrame, plan: AnalysisPlan) -> pd.DataFrame:
     if not plan.derive:
         return frame
@@ -210,7 +233,8 @@ def execute_plan(
 ) -> StructuredResult:
     start = time.monotonic()
     plan = validate_plan(plan, dataset, limits)
-    frame = _apply_derived_columns(dataset.frame, plan)
+    frame = _apply_explode(dataset.frame, plan, dataset)
+    frame = _apply_derived_columns(frame, plan)
     filtered = _apply_filters(frame, plan)
 
     if plan.group_by:

@@ -43,6 +43,7 @@ def profile_dataframe(
             "description": configured.description,
             "semantic_type": configured.semantic_type,
             "synonyms": configured.synonyms,
+            "delimiter": configured.delimiter,
             "null_count": int(series.isna().sum()),
         }
 

@@ -7,6 +7,7 @@ class ColumnConfig(BaseModel):
     description: str = ""
     semantic_type: str | None = None
     synonyms: list[str] = Field(default_factory=list)
+    delimiter: str | None = None
 
 
 class DatasetConfig(BaseModel):

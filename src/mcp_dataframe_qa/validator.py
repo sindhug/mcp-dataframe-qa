@@ -223,9 +223,23 @@ def _validate_derived_columns(plan: AnalysisPlan, dataset: Dataset) -> tuple[set
     return known_columns, numeric_columns
 
 
+def _validate_explode(plan: AnalysisPlan, dataset: Dataset) -> None:
+    _validate_columns(plan.explode, _source_columns(dataset), "explode")
+    configured_columns = dataset.columns or {}
+    for column in plan.explode:
+        config = configured_columns.get(column)
+        if not config or not config.delimiter:
+            raise PlanValidationError(
+                f"Column '{column}' cannot be exploded: no delimiter is configured for it "
+                "in the dataset config."
+            )
+
+
 def validate_plan(plan: AnalysisPlan, dataset: Dataset, limits: LimitsConfig) -> AnalysisPlan:
     if not plan.metrics:
         raise PlanValidationError("Analysis plan must include at least one metric.")
+
+    _validate_explode(plan, dataset)
 
     known_columns, numeric_columns = _validate_derived_columns(plan, dataset)
 

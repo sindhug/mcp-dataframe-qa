@@ -134,3 +134,48 @@ def test_write_starter_config_header_reflects_llm_usage(tmp_path) -> None:
         column_info={"price": {"description": "Price.", "semantic_type": "currency"}},
     )
     assert "LLM-drafted" in llm_path.read_text()
+
+
+def _write_movies_csv(tmp_path) -> str:
+    path = tmp_path / "movies.csv"
+    path.write_text(
+        "title,genres,rating\n"
+        "Jurassic World,Action|Adventure|Science Fiction,6.5\n"
+        "Mad Max,Action|Adventure|Thriller,7.1\n"
+        "Her,Drama|Romance,8.0\n"
+    )
+    return str(path)
+
+
+def test_build_starter_config_detects_delimited_tag_columns(tmp_path) -> None:
+    config = build_starter_config(_write_movies_csv(tmp_path))
+    columns = config["columns"]
+    assert columns["genres"]["delimiter"] == "|"
+    assert columns["genres"]["semantic_type"] == "tag_list"
+    # A non-delimited column is left alone.
+    assert columns["title"]["delimiter"] is None
+
+
+def test_describe_columns_with_llm_parses_delimiter(monkeypatch, tmp_path) -> None:
+    def fake_complete(self: LLMPlanner, system: str, user: str) -> str:
+        return json.dumps(
+            {
+                "columns": {
+                    "genres": {
+                        "description": "Pipe-separated genres for the movie.",
+                        "semantic_type": "tag_list",
+                        "synonyms": ["genre"],
+                        "delimiter": "|",
+                    },
+                }
+            }
+        )
+
+    monkeypatch.setattr(LLMPlanner, "complete", fake_complete)
+    frame = load_dataframe(_write_movies_csv(tmp_path))
+    result = describe_columns_with_llm(
+        frame, LLMConfig(provider="openai", api_key="test-key", model="test-model")
+    )
+    assert result["genres"]["delimiter"] == "|"
+    assert result["genres"]["semantic_type"] == "tag_list"
+

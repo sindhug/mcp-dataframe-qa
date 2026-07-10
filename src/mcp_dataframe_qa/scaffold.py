@@ -12,6 +12,7 @@ back to a conservative name-based guess when no LLM provider is configured.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from mcp_dataframe_qa.llm import LLMConfig, LLMPlanner, LLMResponseError, extrac
 _IDENTIFIER_HINTS = ("_id", "identifier", "code", "sku")
 _CURRENCY_HINTS = ("price", "cost", "revenue", "profit", "sales", "amount", "fee", "fare")
 _COUNT_HINTS = ("count", "quantity", "qty", "number", "num", "total")
+_DELIMITER_CANDIDATES = ("|", ";")
 _MAX_SAMPLE_VALUES = 5
 
 
@@ -68,6 +70,26 @@ def _infer_semantic_type(column: str, series: pd.Series) -> str | None:
     return "dimension"
 
 
+def _infer_delimiter(series: pd.Series) -> str | None:
+    """Detect whether a string column stores a delimited multi-value tag list.
+
+    Conservative on purpose, same reasoning as _infer_semantic_type: only fires
+    when a candidate delimiter appears in most non-null values, so a column
+    that merely contains an occasional "|" isn't mistaken for a tag list like
+    genres ("Action|Adventure|Thriller").
+    """
+    if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_datetime64_any_dtype(series):
+        return None
+    samples = series.dropna().astype(str)
+    if samples.empty:
+        return None
+    for delimiter in _DELIMITER_CANDIDATES:
+        share = (samples.str.count(re.escape(delimiter)) > 0).mean()
+        if share > 0.5:
+            return delimiter
+    return None
+
+
 def _sample_values(series: pd.Series) -> list[str]:
     values = series.dropna().astype(str).unique()[:_MAX_SAMPLE_VALUES].tolist()
     return [value[:80] for value in values]
@@ -78,12 +100,16 @@ _DESCRIBE_SYSTEM_PROMPT = (
     "For each column you are given its name, pandas dtype, and a handful of real "
     "sample values. Return only a JSON object of the shape "
     '{"columns": {"<column name>": {"description": "...", "semantic_type": "...", '
-    '"synonyms": ["...", "..."]}}}, with one entry per input column, in the same order. '
+    '"synonyms": ["...", "..."], "delimiter": null}}}, with one entry per input column, '
+    "in the same order. "
     "description: one factual sentence about what the column holds. If a value like 0 "
     "or a blank string looks like a placeholder for missing data rather than a real "
     "measurement, say so. "
     "semantic_type: a short lowercase label such as identifier, dimension, measurement, "
-    "currency, count, rate, percentage, date, year, or rank. "
+    "currency, count, rate, percentage, date, year, rank, or tag_list. "
+    "delimiter: if the sample values look like several tags joined into one string, for "
+    'example "Action|Adventure|Thriller", set delimiter to that separator character (here '
+    '"|") and semantic_type to tag_list. Otherwise set delimiter to null. '
     "synonyms: 0-4 short alternate phrases a user might type to refer to this column. "
     "Base every judgment on the actual sample values, not just the column name. "
     "Do not include markdown or prose outside the JSON object."
@@ -123,6 +149,7 @@ def describe_columns_with_llm(frame: pd.DataFrame, llm_config: LLMConfig) -> dic
             "description": str(info.get("description") or ""),
             "semantic_type": info.get("semantic_type") or None,
             "synonyms": [str(s) for s in info.get("synonyms") or []],
+            "delimiter": info.get("delimiter") or None,
         }
     return result
 
@@ -145,12 +172,19 @@ def build_starter_config(
         name = str(column)
         info = column_info.get(name, {})
         semantic_type = info.get("semantic_type")
+        used_heuristic_semantic_type = semantic_type is None
         if semantic_type is None:
             semantic_type = _infer_semantic_type(name, frame[column])
+        delimiter = info.get("delimiter")
+        if delimiter is None:
+            delimiter = _infer_delimiter(frame[column])
+            if delimiter and used_heuristic_semantic_type:
+                semantic_type = "tag_list"
         columns[name] = {
             "description": info.get("description", ""),
             "semantic_type": semantic_type,
             "synonyms": info.get("synonyms", []),
+            "delimiter": delimiter,
         }
 
     return {

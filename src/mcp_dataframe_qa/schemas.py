@@ -86,6 +86,7 @@ class DerivedColumn(BaseModel):
 class AnalysisPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    explode: list[str] = Field(default_factory=list)
     derive: list[DerivedColumn] = Field(default_factory=list)
     filters: list[FilterCondition] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)

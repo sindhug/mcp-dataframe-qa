@@ -112,7 +112,15 @@ def compact_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
     for name, metadata in profile.get("columns", {}).items():
         columns[name] = {
             key: metadata.get(key)
-            for key in ["dtype", "description", "semantic_type", "synonyms", "stats", "top_values"]
+            for key in [
+                "dtype",
+                "description",
+                "semantic_type",
+                "synonyms",
+                "delimiter",
+                "stats",
+                "top_values",
+            ]
             if metadata.get(key) is not None
         }
     return {
@@ -201,6 +209,14 @@ def _prompt(question: str, profile: Mapping[str, Any]) -> dict[str, str]:
         "For rate or proportion questions (for example 'how often does X happen'), derive a "
         "0/1 indicator column with a comparison (and and/or/not if the condition is compound), "
         "then take its avg. "
+        "If a column's profile entry has a delimiter (a multi-value tag list like "
+        '"Action|Adventure|Thriller" stored as one string per row), and the question asks '
+        "about individual tags (for example 'which genre'), add that column name to the "
+        'top-level explode list, for example "explode": ["genres"]. This splits it into one '
+        "row per tag before anything else runs, so group_by on that column groups by each tag "
+        "instead of by the whole combination. Only use explode for columns whose profile entry "
+        "has a delimiter, and never on a dataset-wide basis when the question is about whole "
+        "rows (for example counting movies), since it changes the row count. "
         "Derived expressions must be JSON trees, never Python code. "
         'For row counts use {"fn":"count","column":"*","as":"count"}. '
         "For top-N questions, set group_by, one metric, descending sort on the metric alias, "
