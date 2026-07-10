@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from mcp_dataframe_qa.schemas import AnalysisPlan
 
 PROVIDERS = {"openai", "anthropic", "gemini"}
@@ -223,7 +225,37 @@ class LLMPlanner:
         prompts = _prompt(question, profile)
         text = self.complete(prompts["system"], prompts["user"])
         payload = extract_json_object(text)
-        return AnalysisPlan.model_validate(payload)
+        try:
+            return AnalysisPlan.model_validate(payload)
+        except ValidationError as exc:
+            return self._retry_after_invalid_plan(prompts, payload, exc)
+
+    def _retry_after_invalid_plan(
+        self,
+        prompts: dict[str, str],
+        invalid_payload: dict[str, Any],
+        error: ValidationError,
+    ) -> AnalysisPlan:
+        """Give the model one chance to fix a plan that failed schema validation.
+
+        Malformed JSON shape (a wrong field name, an extra field) is a mistake
+        the model can usually correct when shown the exact validation error,
+        so this is worth one retry before giving up.
+        """
+        retry_user = (
+            f"{prompts['user']}\n\n"
+            f"Previous invalid response: {json.dumps(invalid_payload, sort_keys=True)}\n"
+            f"That response failed schema validation with this error: {error}\n"
+            "Return a corrected JSON object only, following the same analysis_plan_shape."
+        )
+        text = self.complete(prompts["system"], retry_user)
+        payload = extract_json_object(text)
+        try:
+            return AnalysisPlan.model_validate(payload)
+        except ValidationError as exc:
+            raise LLMResponseError(
+                f"Model produced an invalid analysis plan, even after a correction attempt: {exc}"
+            ) from exc
 
     def complete(self, system: str, user: str) -> str:
         if self.config.provider == "openai":
