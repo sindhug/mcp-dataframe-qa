@@ -68,3 +68,26 @@ def test_average_inventory_by_state(planner_mode) -> None:
     assert result.kind == "table"
     assert result.table is not None
     assert len(result.table.rows) > 0
+
+
+def test_nonexistent_column_question_is_reported_as_an_error(planner_mode) -> None:
+    """The LLM should recognize an unanswerable question rather than guess.
+
+    The heuristic planner has no "I don't know" path: its column-selection
+    fallback always returns some numeric column, so it would silently answer
+    this with a guess instead of an error. That's LLM-only behavior, so this
+    test only applies in llm mode.
+    """
+    if planner_mode == "heuristic":
+        pytest.skip(
+            "The heuristic planner always guesses a column instead of recognizing "
+            "an unanswerable question; this behavior is LLM-only."
+        )
+    result = _ask(_qa(), "What is the average of a column that does not exist", planner_mode)
+    # The LLM isn't perfectly deterministic here: one run may return an empty
+    # metrics list ("must include at least one metric"), another may invent a
+    # literal column name from the question text ("Unknown metric column
+    # 'column that does not exist'"). Both are legitimate, honest validation
+    # errors -- what actually matters is that it errors instead of silently
+    # returning a confident guess, not which specific rule catches it.
+    assert result.kind == "error"
