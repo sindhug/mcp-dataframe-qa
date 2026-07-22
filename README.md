@@ -130,11 +130,21 @@ To start the MCP server for an MCP-compatible client:
 uv run mcp-dataframe-qa
 ```
 
-You can also verify the local engine before connecting an MCP client:
+You can also ask a one-off question locally, without starting the MCP server:
 
 ```bash
 uv run mcp-dataframe-qa --profile
 uv run mcp-dataframe-qa --ask 'What are the top metros by median list price?'
+```
+
+`--profile` never touches an LLM. `--ask` uses the same LLM-backed planner as
+`mcp-dataframe-chat` by default, so it needs a provider configured (see below).
+Pass `--planner heuristic` for the built-in deterministic planner instead — free,
+no API key or network access needed, useful for a quick sanity check of the
+executor:
+
+```bash
+uv run mcp-dataframe-qa --ask 'What are the top metros by median list price?' --planner heuristic
 ```
 
 For an interactive chatbot loop:
@@ -155,7 +165,9 @@ For offline development without an LLM key, the deterministic planner remains av
 uv run mcp-dataframe-chat --planner heuristic --question 'What are the top metros by median list price?'
 ```
 
-That fallback is useful for testing the executor and MCP plumbing, but the main chatbot path is model-backed.
+That fallback is useful for testing the executor and MCP plumbing without an API
+key, but the main chatbot path is model-backed, and it's what both tools use by
+default.
 
 ### API Key Configuration
 
@@ -831,6 +843,28 @@ of left implicit in "Not Yet Built."
   section is empty or a column has no `description`/`synonyms`, a term like
   "revenue" may not connect to a column literally named `Sales`. This is why
   `--init-config` exists and why annotating the generated config matters.
+
+## Running Tests
+
+```bash
+uv run pytest
+```
+
+Most of the test suite is free and deterministic — no API key or network access
+needed. `tests/test_llm_live.py` is the exception: it asks real natural-language
+questions through the actual configured LLM provider by default, the same as any
+other real use of this tool, which means it costs real (small) money per run and
+needs a provider configured in `.env`. Pass `--planner=heuristic` to swap it, and
+only it, to the free, built-in deterministic planner instead — useful with no API
+key configured, or for a fast local check of the same assertions:
+
+```bash
+uv run pytest --planner=heuristic
+```
+
+With no provider configured and no `--planner=heuristic`, `test_llm_live.py`'s
+tests skip individually with a message pointing at that flag, rather than failing
+the whole suite.
 
 ## Contributing
 

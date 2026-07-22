@@ -7,6 +7,7 @@ from mcp_dataframe_qa.datasets import load_dataframe
 from mcp_dataframe_qa.engine import DataFrameQA
 from mcp_dataframe_qa.llm import (
     LLMConfigurationError,
+    LLMPlanner,
     LLMResponseError,
     load_env_file,
     resolve_llm_config,
@@ -28,6 +29,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the dataset profile and exit.",
     )
     parser.add_argument("--ask", help="Ask one local question without starting MCP.")
+    parser.add_argument(
+        "--planner",
+        choices=["llm", "heuristic"],
+        default="llm",
+        help=(
+            "Planner for --ask: llm (default, uses the configured LLM provider) or "
+            "heuristic (built-in deterministic planner, no API key needed)."
+        ),
+    )
     parser.add_argument(
         "--init-config",
         action="store_true",
@@ -107,7 +117,29 @@ def main(argv: list | None = None) -> int:
         return 0
 
     if args.ask:
-        _print_json(qa.query(args.ask, dataset_id=config.dataset.id).as_dict())
+        if args.planner == "heuristic":
+            result = qa.query(args.ask, dataset_id=config.dataset.id)
+        else:
+            load_env_file()
+            try:
+                llm_config = resolve_llm_config()
+            except LLMConfigurationError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                print(
+                    "Pass --planner heuristic to use the built-in deterministic planner instead.",
+                    file=sys.stderr,
+                )
+                return 2
+            profile = qa.profile(config.dataset.id)
+            try:
+                plan = LLMPlanner(llm_config).plan(args.ask, profile)
+            except LLMResponseError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 3
+            result = qa.execute_plan(plan, dataset_id=config.dataset.id)
+            if result.answer and "Query:" not in result.answer:
+                result.answer = f"{result.answer} Query: {args.ask}"
+        _print_json(result.as_dict())
         return 0
 
     try:
