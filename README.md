@@ -788,7 +788,7 @@ Do not use it as a replacement for:
 - MCP tools with structured result payloads
 - Local terminal chatbot that verifies the MCP stdio path
 - Audit IDs and optional JSONL audit log sink
-- Test coverage for common real-estate questions, guardrails, derived expressions, correlation, explode, regroup, date handling, scaffolding, and the mocked LLM planner
+- Test coverage for common real-estate questions, guardrails, derived expressions, correlation, explode, regroup, date handling, scaffolding, the mocked LLM planner, and a live-LLM suite that asks real questions through the actual configured provider
 
 ## Not Yet Built
 
@@ -861,6 +861,15 @@ key configured, or for a fast local check of the same assertions:
 ```bash
 uv run pytest --planner=heuristic
 ```
+
+The LLM's exact response to the same question isn't perfectly reproducible from
+run to run, confirmed by running `test_llm_live.py` repeatedly during development:
+asked to average a column that doesn't exist, one run returned an empty plan
+(caught by "must include at least one metric"), another invented a literal column
+name from the question text (caught by "Unknown metric column"). Both are honest
+errors, just via different validator rules — which is why these tests assert on
+outcomes (`result.kind == "error"`, a table has rows, a scalar is positive) rather
+than on the exact plan an LLM run happens to produce.
 
 With no provider configured and no `--planner=heuristic`, `test_llm_live.py`'s
 tests skip individually with a message pointing at that flag, rather than failing
