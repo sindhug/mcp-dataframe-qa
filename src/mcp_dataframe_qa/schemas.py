@@ -67,6 +67,33 @@ class SortSpec(BaseModel):
 
 
 class Expression(BaseModel):
+    """
+    This class exists to give derive (in AnalysisPlan and Regroup) a way to describe a 
+    computed value as data. Its a way to represent here is how to calculate something new from
+    existing columns. 
+    DerivedColumn class uses this class inside it as well.
+    validator.py uses it to check that each 'derive' expression is semantically valid,
+    e.g. that arithmetic ops get numeric operands and comparisons/and/or get boolean ones,
+    on top of the type-shape checks Pydantic already enforces automatically
+    executor.py uses it to evaluate the first pass's derive list and second pass to evaluate
+    regroup's derive list
+
+    Only some of the five fields are meaningful for a given node, depending on `op`:
+    - Leaf ("column", "literal"): uses only `column`, or only `value`, respectively.
+    - Unary branch ("not", "year_of", "month_of", "day_of_week"): uses only `left`.
+    - Binary branch (everything else such as arithmetic, comparisons, "and"/"or", "date_diff"):
+      uses `left` and `right`, each itself a full sub-expression (e.g. a comparison's
+      operands are typically a "column" leaf and a "literal" leaf, but can be deeper).
+
+    Nothing here enforces which fields go with which `op`,validator.py's does that job.
+    Question: How does an LLM know to provide a json analysis plan that follows the rules
+    of the class defined here?
+    Answer: It does not know. LLM only knows the english description and JSON example in
+    _prompt() function in llm.py. extract_json_object() exists to recover JSON from messy text. 
+    If the JSON parses but doesn't match AnalysisPlan's shape, AnalysisPlan.model_validate() 
+    catches it and we get exactly one retry, with the LLM's own mistake and the validation
+    error shown back to it. If the text isn't valid JSON at all, there's no retry, it fails immediately
+    """
     model_config = ConfigDict(extra="forbid")
 
     op: ExpressionOp
