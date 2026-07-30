@@ -47,16 +47,16 @@ class FilterCondition(BaseModel):
     AnalysisPlan.model_validate() in llm.py).
 
     validator.py checks only that `column` refers to a real column (in the
-    dataframe or produced by derive) -- it does not check that `value`'s type
+    dataframe or produced by derive), it does not check that `value`'s type
     or `op` makes sense for that column's dtype (e.g. "<" on a text column),
     which Expression's richer semantic checks do for comparisons built as a
     tree instead.
 
     executor.py's _apply_filters walks the list once, in order (not
-    recursively -- there's no tree here), building a boolean mask per
+    recursively, there's no tree here), building a boolean mask per
     condition and narrowing the dataframe row by row. It runs after explode
     and derive (so a filter can reference a computed column) and before
-    group_by/metrics -- the same explode -> derive -> filter -> aggregate
+    group_by/metrics, the same explode -> derive -> filter -> aggregate
     order AnalysisPlan's own field order and the README's pipeline diagram
     both describe.
     If the LLM JSON response contains the key 'filters', it will be 
@@ -70,11 +70,62 @@ class FilterCondition(BaseModel):
 
 
 class Metric(BaseModel):
+    """
+    This class exists to give AnalysisPlan.metrics (and Regroup.metrics) a way
+    to describe one aggregate to compute, like SUM(revenue) AS total_revenue, in
+    SQL terms. `fn` is the aggregate function, `column` is what to aggregate,
+    `column2` exists only for "corr" (the one function needing two columns,
+    not one), and `name` is the output column's name, aliased to "as" on the
+    wire (populate_by_name=True lets Python code construct it via name=
+    instead, since "as" is a reserved keyword and can't be a Python argument
+    name at all).
+
+    planner.py (heuristic) constructs these directly unlike Expression,
+    fully supported without an LLM. An LLM-produced plan's "metrics" list is
+    validated the same implicit way every other nested class here is (as
+    part of AnalysisPlan.model_validate() in llm.py, not a direct call).
+
+    validator.py's _validate_metrics enforces that the column must exist (unless
+    fn="count" with column="*", the one case allowed to skip a real column),
+    "corr" specifically requires column2 and both columns to be numeric, and
+    functions in NUMERIC_METRIC_FNS (avg/mean/median/sum) require a numeric
+    column. Notably min/max/count/nunique have no such requirement, they're
+    valid on any column type, including text and dates.
+
+    output_name does cross-file work. Its the single source of truth for 
+    "what will this metric's result column be called" when 
+    `name`/"as" wasn't supplied, computed once here (falling
+    back through count/corr special cases to a generic f"{fn}_{column}") and
+    reused everywhere a name is needed instead of every caller re-deriving a
+    default independently. The sort column for a heuristic top-N plan
+    (planner.py), reserved/known-column tracking in validator.py, and the
+    actual pandas output column, chart y-axis, and scalar-answer phrasing in
+    executor.py all defer to this one property rather than reading `.name`
+    directly.
+
+    Note how model_config here carries populate_by_name=True -- one of the
+    reserved config keys BaseModel's metaclass reads specially, not a field.
+    This is a design choice, not a technical requirement: the wire key "as" was
+    chosen to mirror SQL (SUM(x) AS total). But "as" is a reserved Python
+    keyword, so it can't be the attribute name too -- forcing an alias. And once
+    a field has an alias, Pydantic only accepts that alias for construction by
+    default, blocking the Python name= this codebase's own planner.py needs to
+    use (Metric(as=...) is a syntax error, not a choice). populate_by_name=True
+    exists purely to undo that side effect. Had the wire key just been "name"
+    from the start, none of this -- no alias, no populate_by_name -- would have
+    been needed at all.
+    When you use this repo, you can decide to change this.
+    """
+
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     fn: MetricFn
     column: str = "*"
     column2: str | None = None
+    # alias="as" mirrors SQL's `AS`; "as" being a Python keyword forces this
+    # divergence between wire key and attribute name, which is the only reason
+    # populate_by_name=True (above) is needed to let Python code still use
+    # name= directly instead of being locked into the alias.
     name: str | None = Field(default=None, alias="as")
 
     @property
