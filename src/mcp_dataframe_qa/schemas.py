@@ -103,16 +103,16 @@ class Metric(BaseModel):
     executor.py all defer to this one property rather than reading `.name`
     directly.
 
-    Note how model_config here carries populate_by_name=True -- one of the
+    Note how model_config here carries populate_by_name=True, one of the
     reserved config keys BaseModel's metaclass reads specially, not a field.
     This is a design choice, not a technical requirement: the wire key "as" was
     chosen to mirror SQL (SUM(x) AS total). But "as" is a reserved Python
-    keyword, so it can't be the attribute name too -- forcing an alias. And once
+    keyword, so it can't be the attribute name too forcing an alias. And once
     a field has an alias, Pydantic only accepts that alias for construction by
     default, blocking the Python name= this codebase's own planner.py needs to
     use (Metric(as=...) is a syntax error, not a choice). populate_by_name=True
     exists purely to undo that side effect. Had the wire key just been "name"
-    from the start, none of this -- no alias, no populate_by_name -- would have
+    from the start, none of this (no alias, no populate_by_name) would have
     been needed at all.
     When you use this repo, you can decide to change this.
     """
