@@ -1,6 +1,6 @@
 # MCP DataFrame QA
 
-A research-informed MCP server for safe dataframe question answering over local data.
+Ask questions over local dataframes without dumping the whole dataframe into LLM context.
 
 Dumping an entire dataframe into an LLM prompt for every question is an inefficient way to do analytics. It burns context window on raw rows, gets expensive quickly, forces aggressive truncation for real datasets, and can still leave the model guessing instead of calculating. The better pattern is to give the model compact schema context, let it decide what statistics are needed, execute those specific dataframe operations locally, and return the computed facts as focused context for the final answer.
 
